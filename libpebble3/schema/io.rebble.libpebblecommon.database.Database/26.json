@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 25,
-    "identityHash": "f8d6f4156f4d4645ca89a71d78787a4a",
+    "version": 26,
+    "identityHash": "ee9c51bb578859c68e53a0add1e07de6",
     "entities": [
       {
         "tableName": "KnownWatchItem",
@@ -1088,11 +1088,161 @@
             "lookupKey"
           ]
         }
+      },
+      {
+        "tableName": "health_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`timestamp` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `orientation` INTEGER NOT NULL, `intensity` INTEGER NOT NULL, `lightIntensity` INTEGER NOT NULL, `activeMinutes` INTEGER NOT NULL, `restingGramCalories` INTEGER NOT NULL, `activeGramCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `heartRate` INTEGER NOT NULL, `heartRateZone` INTEGER NOT NULL, `heartRateWeight` INTEGER NOT NULL, PRIMARY KEY(`timestamp`))",
+        "fields": [
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orientation",
+            "columnName": "orientation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intensity",
+            "columnName": "intensity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lightIntensity",
+            "columnName": "lightIntensity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeMinutes",
+            "columnName": "activeMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "restingGramCalories",
+            "columnName": "restingGramCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeGramCalories",
+            "columnName": "activeGramCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceCm",
+            "columnName": "distanceCm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRate",
+            "columnName": "heartRate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateZone",
+            "columnName": "heartRateZone",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateWeight",
+            "columnName": "heartRateWeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "timestamp"
+          ]
+        }
+      },
+      {
+        "tableName": "overlay_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startTime` INTEGER NOT NULL, `duration` INTEGER NOT NULL, `type` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `restingKiloCalories` INTEGER NOT NULL, `activeKiloCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `offsetUTC` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startTime",
+            "columnName": "startTime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duration",
+            "columnName": "duration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "restingKiloCalories",
+            "columnName": "restingKiloCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeKiloCalories",
+            "columnName": "activeKiloCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceCm",
+            "columnName": "distanceCm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "offsetUTC",
+            "columnName": "offsetUTC",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f8d6f4156f4d4645ca89a71d78787a4a')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ee9c51bb578859c68e53a0add1e07de6')"
     ]
   }
 }

@@ -29,6 +29,23 @@ interface HealthDao {
     @Query("SELECT SUM(steps) FROM health_data WHERE timestamp >= :start AND timestamp <= :end")
     suspend fun getTotalSteps(start: Long, end: Long): Int?
 
+    @Query(
+            """
+            SELECT 
+                SUM(steps) AS steps,
+                SUM(activeGramCalories) AS activeGramCalories,
+                SUM(restingGramCalories) AS restingGramCalories,
+                SUM(activeMinutes) AS activeMinutes,
+                SUM(distanceCm) AS distanceCm
+            FROM health_data
+            WHERE timestamp >= :start AND timestamp < :end
+            """
+    )
+    suspend fun getAggregatedHealthData(start: Long, end: Long): HealthAggregates?
+
+    @Query("SELECT SUM(steps) FROM health_data WHERE timestamp >= :start AND timestamp < :end")
+    suspend fun getTotalStepsExclusiveEnd(start: Long, end: Long): Long?
+
     @Query("SELECT AVG(steps) FROM health_data WHERE timestamp >= :start AND timestamp <= :end")
     suspend fun getAverageSteps(start: Long, end: Long): Double?
 
@@ -43,4 +60,17 @@ interface HealthDao {
 
     @Query("SELECT * FROM health_data WHERE timestamp = :timestamp")
     suspend fun getDataAtTimestamp(timestamp: Long): HealthDataEntity?
+
+    @Query(
+            "SELECT SUM(duration) FROM overlay_data WHERE startTime >= :start AND startTime < :end AND type = :type"
+    )
+    suspend fun getOverlayDuration(start: Long, end: Long, type: Int): Long?
 }
+
+data class HealthAggregates(
+        val steps: Long?,
+        val activeGramCalories: Long?,
+        val restingGramCalories: Long?,
+        val activeMinutes: Long?,
+        val distanceCm: Long?,
+)

@@ -1,13 +1,18 @@
 package io.rebble.libpebblecommon.services
 
 import co.touchlab.kermit.Logger
+import coredev.BlobDatabase
 import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
+import io.rebble.libpebblecommon.database.dao.HealthAggregates
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.health.OverlayType
 import io.rebble.libpebblecommon.packets.DataLoggingIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
+import io.rebble.libpebblecommon.packets.blobdb.BlobCommand
+import io.rebble.libpebblecommon.packets.blobdb.BlobResponse
 import io.rebble.libpebblecommon.services.app.AppRunStateService
+import io.rebble.libpebblecommon.services.blobdb.BlobDBService
 import io.rebble.libpebblecommon.util.DataBuffer
 import io.rebble.libpebblecommon.util.Endian
 import kotlinx.coroutines.delay
@@ -18,6 +23,18 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.daysUntil
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
+import kotlin.random.Random
 import kotlin.uuid.Uuid
 
 class HealthService(
@@ -25,10 +42,13 @@ class HealthService(
         private val scope: ConnectionCoroutineScope,
         private val healthDao: HealthDao,
         private val appRunStateService: AppRunStateService,
+        private val blobDBService: BlobDBService,
 ) : ProtocolService {
     private val logger = Logger.withTag("HealthService")
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
+    private var lastHealthStatsUpdateTimeSec = 0L
+    private var lastHealthDataTimestamp: Long? = null
 
     fun init() {
         listenForHealthUpdates()
@@ -36,6 +56,7 @@ class HealthService(
         scope.launch {
             logger.i { "Initializing health service, requesting health sync" }
             fetchHealthData()
+            updateHealthStatsIfNeeded(force = true)
         }
     }
 
@@ -114,6 +135,7 @@ class HealthService(
                         val intervalMs = if (appOpen) ONE_MINUTE_MS else FIFTEEN_MINUTES_MS
                         while (true) {
                             fetchHealthData()
+                            updateHealthStatsIfNeeded()
                             delay(intervalMs)
                         }
                     }
@@ -336,6 +358,136 @@ class HealthService(
     private fun OverlayType.isSleep(): Boolean =
             this == OverlayType.Sleep || this == OverlayType.DeepSleep || this == OverlayType.Nap || this == OverlayType.DeepNap
 
+    private suspend fun updateHealthStatsIfNeeded(force: Boolean = false) {
+        val latestTimestamp = healthDao.getLatestTimestamp()
+        if (latestTimestamp == null || latestTimestamp <= 0) {
+            logger.d { "Skipping health stats update; no health data available" }
+            return
+        }
+
+        val now = kotlin.time.Clock.System.now().epochSeconds
+        val shouldUpdate =
+                force ||
+                        lastHealthDataTimestamp == null ||
+                        latestTimestamp > (lastHealthDataTimestamp ?: -1) ||
+                        (now - lastHealthStatsUpdateTimeSec) >= SECONDS_IN_DAY
+
+        if (!shouldUpdate) return
+
+        val updated = updateHealthStats(latestTimestamp)
+        lastHealthStatsUpdateTimeSec = now
+        lastHealthDataTimestamp = latestTimestamp
+        if (!updated) {
+            logger.d { "Health stats update attempt finished without any writes" }
+        }
+    }
+
+    private suspend fun updateHealthStats(latestTimestamp: Long): Boolean {
+        val timeZone = TimeZone.currentSystemDefault()
+        val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+        val startDate = today.minus(DatePeriod(days = HEALTH_STATS_AVERAGE_DAYS))
+        val daysInRange = startDate.daysUntil(today)
+        if (daysInRange <= 0) {
+            logger.w { "Health stats range invalid (start=$startDate end=$today)" }
+            return false
+        }
+
+        val startEpoch = startDate.startOfDayEpochSeconds(timeZone)
+        val endEpoch = today.startOfDayEpochSeconds(timeZone)
+
+        val averageSteps =
+                ((healthDao.getTotalStepsExclusiveEnd(startEpoch, endEpoch) ?: 0L) / daysInRange)
+                        .toInt()
+                        .coerceAtLeast(0)
+        val averageSleepSeconds =
+                ((healthDao.getOverlayDuration(startEpoch, endEpoch, OverlayType.Sleep.value)
+                        ?: 0L) / daysInRange)
+                        .toInt()
+                        .coerceAtLeast(0)
+
+        val monthlyStepsSent = sendAverageMonthlySteps(averageSteps)
+        val monthlySleepSent = sendAverageMonthlySleep(averageSleepSeconds)
+        val movementSent = sendWeeklyMovementData(today, timeZone)
+
+        if (monthlyStepsSent || monthlySleepSent || movementSent) {
+            logger.i {
+                "Health stats updated (latestTimestamp=$latestTimestamp, avgSteps=$averageSteps, avgSleepSec=$averageSleepSeconds)"
+            }
+        }
+
+        return monthlyStepsSent || monthlySleepSent || movementSent
+    }
+
+    private suspend fun sendWeeklyMovementData(endDateInclusive: LocalDate, timeZone: TimeZone): Boolean {
+        var anySent = false
+        repeat(MOVEMENT_HISTORY_DAYS) { offset ->
+            val day = endDateInclusive.minus(DatePeriod(days = offset))
+            val key = MOVEMENT_KEYS[day.dayOfWeek] ?: return@repeat
+            val start = day.startOfDayEpochSeconds(timeZone)
+            val end = day.plus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone)
+            val aggregates = healthDao.getAggregatedHealthData(start, end)
+            val payload = movementPayload(start, aggregates)
+            val sent = sendHealthStat(key, payload)
+            anySent = anySent || sent
+        }
+        return anySent
+    }
+
+    private fun movementPayload(dayStartEpochSec: Long, aggregates: HealthAggregates?): UByteArray {
+        val buffer = DataBuffer(MOVEMENT_PAYLOAD_SIZE).apply { setEndian(Endian.Little) }
+        buffer.putUInt(HEALTH_STATS_VERSION)
+        buffer.putUInt(dayStartEpochSec.toUInt())
+        buffer.putUInt((aggregates?.steps ?: 0L).safeUInt())
+        buffer.putUInt((aggregates?.activeGramCalories ?: 0L).kilocalories().safeUInt())
+        buffer.putUInt((aggregates?.restingGramCalories ?: 0L).kilocalories().safeUInt())
+        buffer.putUInt((aggregates?.distanceCm ?: 0L).kilometers().safeUInt())
+        buffer.putUInt((aggregates?.activeMinutes ?: 0L).safeUInt())
+        return buffer.array()
+    }
+
+    private suspend fun sendAverageMonthlySteps(steps: Int): Boolean =
+            sendHealthStat(KEY_AVERAGE_DAILY_STEPS, encodeUInt(steps.coerceAtLeast(0).toUInt()))
+
+    private suspend fun sendAverageMonthlySleep(seconds: Int): Boolean =
+            sendHealthStat(KEY_AVERAGE_SLEEP_DURATION, encodeUInt(seconds.coerceAtLeast(0).toUInt()))
+
+    private suspend fun sendHealthStat(key: String, payload: UByteArray): Boolean {
+        val response =
+                withTimeoutOrNull(HEALTH_STATS_BLOB_TIMEOUT_MS) {
+                    blobDBService.send(
+                            BlobCommand.InsertCommand(
+                                    token = randomToken(),
+                                    database = BlobDatabase.HealthStats,
+                                    key = key.encodeToByteArray().toUByteArray(),
+                                    value = payload,
+                            )
+                    )
+                }
+        val status = response?.responseValue ?: BlobResponse.BlobStatus.WatchDisconnected
+        val success = status == BlobResponse.BlobStatus.Success
+        if (!success) {
+            logger.w { "Failed to write health stat '$key' (status=$status)" }
+        }
+        return success
+    }
+
+    private fun Long.kilocalories(): Long = this / 1000L
+    private fun Long.kilometers(): Long = this / 100000L
+    private fun Long.safeUInt(): UInt =
+            this.coerceAtLeast(0L).coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt()
+
+    private fun encodeUInt(value: UInt): UByteArray {
+        val buffer = DataBuffer(UInt.SIZE_BYTES).apply { setEndian(Endian.Little) }
+        buffer.putUInt(value)
+        return buffer.array()
+    }
+
+    private fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long =
+            this.atStartOfDayIn(timeZone).epochSeconds
+
+    private fun randomToken(): UShort =
+            Random.nextInt(0, UShort.MAX_VALUE.toInt()).toUShort()
+
     companion object {
         private val HEALTH_TAGS = setOf(HEALTH_STEPS_TAG, HEALTH_SLEEP_TAG, HEALTH_OVERLAY_TAG, HEALTH_HR_TAG)
         private const val HEALTH_STEPS_TAG: UInt = 81u
@@ -344,6 +496,24 @@ class HealthService(
         private const val HEALTH_HR_TAG: UInt = 85u
         private const val ONE_MINUTE_MS = 60_000L
         private const val FIFTEEN_MINUTES_MS = 15 * ONE_MINUTE_MS
+        private const val HEALTH_STATS_AVERAGE_DAYS = 30
+        private const val MOVEMENT_HISTORY_DAYS = 7
+        private const val HEALTH_STATS_BLOB_TIMEOUT_MS = 5_000L
+        private const val SECONDS_IN_DAY = 86_400L
+        private const val MOVEMENT_PAYLOAD_SIZE = UInt.SIZE_BYTES * 7
+        private const val HEALTH_STATS_VERSION: UInt = 1u
+        private const val KEY_AVERAGE_DAILY_STEPS = "average_dailySteps"
+        private const val KEY_AVERAGE_SLEEP_DURATION = "average_sleepDuration"
+        private val MOVEMENT_KEYS =
+                mapOf(
+                        DayOfWeek.MONDAY to "monday_movementData",
+                        DayOfWeek.TUESDAY to "tuesday_movementData",
+                        DayOfWeek.WEDNESDAY to "wednesday_movementData",
+                        DayOfWeek.THURSDAY to "thursday_movementData",
+                        DayOfWeek.FRIDAY to "friday_movementData",
+                        DayOfWeek.SATURDAY to "saturday_movementData",
+                        DayOfWeek.SUNDAY to "sunday_movementData",
+                )
         private val VERSION_FW_3_10_AND_BELOW: UShort = 5u
         private val VERSION_FW_3_11: UShort = 6u
         private val VERSION_FW_4_0: UShort = 7u
