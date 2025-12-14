@@ -1611,6 +1611,24 @@ fun HealthDebugSection(libPebble: LibPebble) {
                     }
 
                     Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                isSyncing = true
+                                libPebble.forceHealthDataOverwrite()
+                                kotlinx.coroutines.delay(1500)
+                                refreshStats()
+                                isSyncing = false
+                            }
+                        },
+                        enabled = !isLoading && !isSyncing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Force Overwrite All Health Data", fontSize = 12.sp)
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         "Filter logs with 'HEALTH_' to see detailed sync information",
                         style = MaterialTheme.typography.bodySmall,

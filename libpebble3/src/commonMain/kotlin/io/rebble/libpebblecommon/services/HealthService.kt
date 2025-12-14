@@ -7,12 +7,15 @@ import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
 import io.rebble.libpebblecommon.database.dao.HealthAggregates
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
+import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
+import io.rebble.libpebblecommon.database.dao.removeDuplicateOverlayEntries
 import io.rebble.libpebblecommon.database.entity.HealthDataEntity
 import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.health.OverlayType
 import io.rebble.libpebblecommon.packets.DataLoggingIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
+import io.rebble.libpebblecommon.packets.HealthSyncIncomingPacket
 import io.rebble.libpebblecommon.packets.blobdb.BlobCommand
 import io.rebble.libpebblecommon.packets.blobdb.BlobResponse
 import io.rebble.libpebblecommon.services.app.AppRunStateService
@@ -49,6 +52,8 @@ class HealthService(
     private val logger = Logger.withTag("HealthService")
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
+    private val lastFullStatsUpdate = MutableStateFlow(0L) // Epoch millis of last full stats push
+    private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null) // Date of last today movement update
 
     fun init() {
         // Register this service instance so it can be accessed for manual sync requests
@@ -57,8 +62,8 @@ class HealthService(
         listenForHealthUpdates()
         startPeriodicStatsUpdate()
         scope.launch {
-            logger.i { "HEALTH_SERVICE: Initializing and sending initial stats to watch" }
-            updateHealthStats()
+            logger.i { "HEALTH_SERVICE: Initializing and reconciling health data with connected watch" }
+            reconcileWatchWithDatabase()
         }
 
         // Unregister when the connection scope is cancelled
@@ -77,25 +82,7 @@ class HealthService(
      */
     fun requestHealthData(fullSync: Boolean = false) {
         scope.launch {
-            val packet = if (fullSync) {
-                logger.i { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
-                HealthSyncOutgoingPacket.RequestFirstSync(
-                    kotlin.time.Clock.System.now().epochSeconds.toUInt()
-                )
-            } else {
-                val lastSync = healthDao.getLatestTimestamp() ?: 0L
-                val currentTime = kotlin.time.Clock.System.now().epochSeconds
-                val timeSinceLastSync = if (lastSync > 0) {
-                    (currentTime - (lastSync / 1000)).coerceAtLeast(60)
-                } else {
-                    0
-                }
-
-                logger.i { "HEALTH_SERVICE: Requesting incremental health data sync (last ${timeSinceLastSync}s)" }
-                HealthSyncOutgoingPacket.RequestSync(timeSinceLastSync.toUInt())
-            }
-
-            protocolHandler.send(packet)
+            sendHealthDataRequest(fullSync)
         }
     }
 
@@ -106,7 +93,105 @@ class HealthService(
         scope.launch {
             logger.i { "HEALTH_STATS: Manual health averages send requested" }
             updateHealthStats()
+            lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
         }
+    }
+
+    /**
+     * Force a complete health data overwrite on the watch, ignoring the 12-hour throttle.
+     * Useful for debugging or when you know the watch has incorrect data.
+     */
+    fun forceHealthDataOverwrite() {
+        scope.launch {
+            logger.i { "HEALTH_STATS: Force overwrite requested - pushing all health data to watch" }
+
+            // First, clean up any duplicate overlay entries in the database
+            healthDao.removeDuplicateOverlayEntries()
+
+            val timeZone = TimeZone.currentSystemDefault()
+            val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+            lastTodayUpdateDate.value = null
+            updateHealthStats()
+            lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            lastTodayUpdateDate.value = today
+        }
+    }
+
+    private suspend fun reconcileWatchWithDatabase() {
+        val baselineTimestamp = healthDao.getLatestTimestamp() ?: 0L
+        val isFirstSync = baselineTimestamp == 0L
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60 * 60_000L)
+
+        logger.i { "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)" }
+
+        // Always request any new data from the watch first
+        sendHealthDataRequest(fullSync = false)
+        val newDataArrived = waitForNewerHealthData(baselineTimestamp)
+
+        if (newDataArrived) {
+            logger.i { "HEALTH_SYNC: Newer health data pulled from watch and merged with database" }
+            // Wait longer to ensure all async database writes complete before we read back for stats
+            delay(1000)
+        }
+
+        // Push full stats to watch on connection (assume watch may have switched or been reset)
+        // This overwrites the watch with our database, which now contains the merged best data
+        // But throttle to avoid excessive updates if connection drops/reconnects frequently
+        if (hoursSinceLastFullUpdate >= 12) {
+            logger.i { "HEALTH_SYNC: Pushing merged database stats to watch (treating as new/switched watch)" }
+            // Reset today's update flag so it can be updated again if needed
+            lastTodayUpdateDate.value = null
+            updateHealthStats()
+            lastFullStatsUpdate.value = now
+            // Mark that we've updated today so we don't do it again immediately
+            val timeZone = TimeZone.currentSystemDefault()
+            val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+            lastTodayUpdateDate.value = today
+        } else {
+            logger.i { "HEALTH_SYNC: Skipping full stats push - recently updated ${hoursSinceLastFullUpdate}h ago (prevents reconnection spam)" }
+        }
+    }
+
+    private suspend fun sendHealthDataRequest(fullSync: Boolean) {
+        val packet = if (fullSync) {
+            logger.i { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
+            HealthSyncOutgoingPacket.RequestFirstSync(
+                kotlin.time.Clock.System.now().epochSeconds.toUInt()
+            )
+        } else {
+            val lastSync = healthDao.getLatestTimestamp() ?: 0L
+            val currentTime = kotlin.time.Clock.System.now().epochSeconds
+            val timeSinceLastSync = if (lastSync > 0) {
+                (currentTime - (lastSync / 1000)).coerceAtLeast(60)
+            } else {
+                0
+            }
+
+            logger.i { "HEALTH_SERVICE: Requesting incremental health data sync (last ${timeSinceLastSync}s)" }
+            HealthSyncOutgoingPacket.RequestSync(timeSinceLastSync.toUInt())
+        }
+
+        protocolHandler.send(packet)
+    }
+
+    private suspend fun waitForNewerHealthData(previousLatest: Long): Boolean {
+        val baseline = previousLatest.coerceAtLeast(0L)
+        return withTimeoutOrNull(HEALTH_SYNC_WAIT_MS) {
+            while (true) {
+                delay(HEALTH_SYNC_POLL_MS)
+                val latest = healthDao.getLatestTimestamp() ?: 0L
+
+                val hasNewer = if (baseline == 0L) {
+                    latest > 0L
+                } else {
+                    latest > baseline
+                }
+
+                if (hasNewer) return@withTimeoutOrNull true
+            }
+            false
+        } ?: false
     }
 
     /**
@@ -150,17 +235,27 @@ class HealthService(
                         is DataLoggingIncomingPacket.OpenSession -> handleSessionOpen(packet)
                         is DataLoggingIncomingPacket.SendDataItems -> handleSendDataItems(packet)
                         is DataLoggingIncomingPacket.CloseSession -> handleSessionClose(packet)
+                        is HealthSyncIncomingPacket -> handleHealthSyncRequest(packet)
                     }
                 }
                 .launchIn(scope)
     }
 
+    private fun handleHealthSyncRequest(packet: HealthSyncIncomingPacket) {
+        logger.i { "HEALTH_SYNC: Watch requested health sync (payload=${packet.payload.size} bytes)" }
+        scope.launch {
+            sendHealthDataRequest(fullSync = false)
+        }
+    }
+
     private fun startPeriodicStatsUpdate() {
         scope.launch {
-            // Update health stats periodically - the watch will broadcast data when ready
+            // Update health stats once daily to minimize battery usage
             while (true) {
-                delay(FIFTEEN_MINUTES_MS)
+                delay(TWENTY_FOUR_HOURS_MS)
+                logger.i { "HEALTH_STATS: Running scheduled daily stats update" }
                 updateHealthStats()
+                lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
             }
         }
     }
@@ -202,10 +297,20 @@ class HealthService(
         scope.launch {
             processHealthData(session, payload)
 
-            // Update health stats after receiving new data
+            // Optionally update today's movement and recent sleep data when we finish receiving a batch
+            // This keeps the watch relatively up-to-date without excessive BlobDB writes
             if (itemsLeft.toInt() == 0) {
-                // This was the last batch of data, update stats
-                updateHealthStats()
+                val timeZone = TimeZone.currentSystemDefault()
+                val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+
+                if (lastTodayUpdateDate.value != today) {
+                    logger.d { "HEALTH_DATA: Received new data, updating today's movement and recent sleep data" }
+                    sendTodayMovementData()
+                    sendRecentSleepData(today, timeZone)
+                    lastTodayUpdateDate.value = today
+                } else {
+                    logger.d { "HEALTH_DATA: Already updated today's movement and sleep data" }
+                }
             }
         }
     }
@@ -645,8 +750,8 @@ class HealthService(
             val distKm = (activityDistanceKm * 100).toInt() / 100.0
             "HEALTH_DATA: Received ${records.size} overlay records - sleep=${sleepRecords.size} (${sleepHrs}h), activities=${activityRecords.size} (steps=$activitySteps, distance=${distKm}km)"
         }
-        healthDao.insertOverlayData(records)
-        logger.d { "HEALTH_DATA: Inserted ${records.size} overlay records into database" }
+        healthDao.insertOverlayDataWithDeduplication(records)
+        logger.d { "HEALTH_DATA: Processed ${records.size} overlay records (see deduplication summary above)" }
     }
 
     private suspend fun updateHealthStats() {
@@ -690,15 +795,16 @@ class HealthService(
         val monthlyStepsSent = sendAverageMonthlySteps(averages.averageStepsPerDay)
         val monthlySleepSent = sendAverageMonthlySleep(averages.averageSleepSecondsPerDay)
         val movementSent = sendWeeklyMovementData(today, timeZone)
+        val sleepSent = sendWeeklySleepData(today, timeZone)
 
-        val sentCount = listOf(monthlyStepsSent, monthlySleepSent, movementSent).count { it }
+        val sentCount = listOf(monthlyStepsSent, monthlySleepSent, movementSent, sleepSent).count { it }
         if (sentCount > 0) {
             logger.i { "HEALTH_STATS: Successfully sent $sentCount stat categories to watch" }
         } else {
             logger.w { "HEALTH_STATS: Failed to send any stats to watch" }
         }
 
-        return monthlyStepsSent || monthlySleepSent || movementSent
+        return monthlyStepsSent || monthlySleepSent || movementSent || sleepSent
     }
 
     private suspend fun sendWeeklyMovementData(endDateInclusive: LocalDate, timeZone: TimeZone): Boolean {
@@ -739,6 +845,269 @@ class HealthService(
 
         logger.i { "HEALTH_STATS: Weekly movement data: sent $successCount/$MOVEMENT_HISTORY_DAYS days successfully" }
         return anySent
+    }
+
+    private suspend fun sendTodayMovementData(): Boolean {
+        val timeZone = TimeZone.currentSystemDefault()
+        val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+        val dayName = today.dayOfWeek.name
+        val key = MOVEMENT_KEYS[today.dayOfWeek] ?: return false
+
+        val start = today.startOfDayEpochSeconds(timeZone)
+        val end = today.plus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone)
+        val aggregates = healthDao.getAggregatedHealthData(start, end)
+
+        val steps = aggregates?.steps ?: 0L
+        val activeKcal = (aggregates?.activeGramCalories ?: 0L) / 1000
+        val restingKcal = (aggregates?.restingGramCalories ?: 0L) / 1000
+        val distanceKm = (aggregates?.distanceCm ?: 0L) / 100000.0
+        val activeMin = aggregates?.activeMinutes ?: 0L
+        val activeSec = activeMin * 60
+
+        logger.i {
+            val distKm = (distanceKm * 100).toInt() / 100.0
+            "HEALTH_STATS: Updating today's movement data ($dayName): steps=$steps, activeKcal=$activeKcal, restingKcal=$restingKcal, distance=${distKm}km, activeSec=$activeSec"
+        }
+
+        val payload = movementPayload(start, aggregates)
+        val sent = sendHealthStat(key, payload)
+        if (sent) {
+            logger.d { "HEALTH_STATS: Successfully sent today's movement data to watch" }
+        } else {
+            logger.w { "HEALTH_STATS: Failed to send today's movement data to watch" }
+        }
+        return sent
+    }
+
+    private suspend fun sendRecentSleepData(today: LocalDate, timeZone: TimeZone) {
+        // Send yesterday's and today's sleep data
+        // Yesterday's sleep covers last night (6 PM yesterday to 2 PM today)
+        // Today's sleep covers tonight (6 PM today to 2 PM tomorrow) - usually empty unless it's late
+        logger.d { "HEALTH_STATS: Sending recent sleep data (yesterday and today)" }
+
+        val yesterday = today.minus(DatePeriod(days = 1))
+        sendSingleDaySleep(yesterday, timeZone)
+        sendSingleDaySleep(today, timeZone)
+    }
+
+    private suspend fun sendSingleDaySleep(day: LocalDate, timeZone: TimeZone): Boolean {
+        val dayName = day.dayOfWeek.name
+        val key = SLEEP_KEYS[day.dayOfWeek] ?: return false
+
+        // Sleep for "today" means you went to bed last night (6 PM yesterday) and woke up this morning/afternoon (2 PM today)
+        val searchStart = day.minus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone) + (18 * 3600) // 6 PM yesterday
+        val searchEnd = day.startOfDayEpochSeconds(timeZone) + (14 * 3600) // 2 PM today
+
+        val sleepTypes = listOf(OverlayType.Sleep.value, OverlayType.DeepSleep.value)
+        val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+
+        // Group into sessions (same logic as weekly sleep)
+        data class SleepSession(
+            var start: Long,
+            var end: Long,
+            var totalSleep: Long = 0,
+            var deepSleep: Long = 0
+        )
+
+        val sessions = mutableListOf<SleepSession>()
+        sleepEntries.sortedBy { it.startTime }.forEach { entry ->
+            val overlayType = OverlayType.fromValue(entry.type)
+            val entryEnd = entry.startTime + entry.duration
+
+            val existingSession = sessions.lastOrNull()?.takeIf {
+                entry.startTime <= it.end + 3600
+            }
+
+            if (existingSession != null) {
+                existingSession.end = maxOf(existingSession.end, entryEnd)
+                if (overlayType == OverlayType.Sleep) {
+                    existingSession.totalSleep += entry.duration
+                }
+                if (overlayType == OverlayType.DeepSleep) {
+                    existingSession.deepSleep += entry.duration
+                }
+            } else {
+                sessions.add(SleepSession(
+                    start = entry.startTime,
+                    end = entryEnd,
+                    totalSleep = if (overlayType == OverlayType.Sleep) entry.duration else 0,
+                    deepSleep = if (overlayType == OverlayType.DeepSleep) entry.duration else 0
+                ))
+            }
+        }
+
+        val mainSleep = sessions.maxByOrNull { it.totalSleep }
+        val totalSleepSeconds = mainSleep?.totalSleep ?: 0L
+        val deepSleepSeconds = mainSleep?.deepSleep ?: 0L
+        val fallAsleepTime = mainSleep?.start?.toInt() ?: 0
+        val wakeupTime = mainSleep?.end?.toInt() ?: 0
+
+        val totalSleepHours = totalSleepSeconds / 3600.0
+
+        logger.d {
+            val sleepHrs = (totalSleepHours * 10).toInt() / 10.0
+            "HEALTH_STATS: $dayName sleep: ${sleepHrs}h"
+        }
+
+        val payload = sleepPayload(
+            day.startOfDayEpochSeconds(timeZone),
+            totalSleepSeconds.toInt(),
+            deepSleepSeconds.toInt(),
+            fallAsleepTime,
+            wakeupTime
+        )
+        return sendHealthStat(key, payload)
+    }
+
+    private suspend fun sendWeeklySleepData(endDateInclusive: LocalDate, timeZone: TimeZone): Boolean {
+        logger.i { "HEALTH_STATS: Sending weekly sleep data for last $MOVEMENT_HISTORY_DAYS days" }
+        var anySent = false
+        var successCount = 0
+
+        repeat(MOVEMENT_HISTORY_DAYS) { offset ->
+            val day = endDateInclusive.minus(DatePeriod(days = offset))
+            val dayName = day.dayOfWeek.name
+            val key = SLEEP_KEYS[day.dayOfWeek] ?: return@repeat
+
+            // Sleep for "this day" means you went to bed the night before (6 PM yesterday) and woke up this morning/afternoon (2 PM today)
+            // This matches how steps work - both today's steps and today's sleep happened in the same 24-hour period
+            val searchStart = day.minus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone) + (18 * 3600) // 6 PM yesterday
+            val searchEnd = day.startOfDayEpochSeconds(timeZone) + (14 * 3600) // 2 PM today
+
+            // Get sleep overlay entries for this period (excluding naps - we only want main sleep)
+            val sleepTypes = listOf(
+                OverlayType.Sleep.value,
+                OverlayType.DeepSleep.value
+            )
+            val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+
+            logger.d {
+                "HEALTH_STATS: $dayName raw entries from DB: ${sleepEntries.size} entries"
+            }
+            sleepEntries.forEach { entry ->
+                val type = OverlayType.fromValue(entry.type)
+                val durationHours = entry.duration / 3600.0
+                logger.d {
+                    "  Entry ID=${entry.id}: type=$type, start=${entry.startTime}, duration=${durationHours}h (${entry.duration}s)"
+                }
+            }
+
+            // Group consecutive sleep entries into sessions
+            // Sleep and DeepSleep entries that are close together (within 1 hour) are part of the same sleep session
+            data class SleepSession(
+                var start: Long,
+                var end: Long,
+                var totalSleep: Long = 0,
+                var deepSleep: Long = 0
+            )
+
+            val sessions = mutableListOf<SleepSession>()
+            sleepEntries.sortedBy { it.startTime }.forEach { entry ->
+                val overlayType = OverlayType.fromValue(entry.type)
+                val entryEnd = entry.startTime + entry.duration
+
+                // Find if this entry belongs to an existing session (within 1 hour of last entry)
+                val existingSession = sessions.lastOrNull()?.takeIf {
+                    entry.startTime <= it.end + 3600 // Within 1 hour of previous entry
+                }
+
+                if (existingSession != null) {
+                    // Add to existing session
+                    existingSession.end = maxOf(existingSession.end, entryEnd)
+                    // Only count Sleep entries toward total sleep duration
+                    if (overlayType == OverlayType.Sleep) {
+                        existingSession.totalSleep += entry.duration
+                    }
+                    // DeepSleep entries only contribute to deep sleep counter
+                    if (overlayType == OverlayType.DeepSleep) {
+                        existingSession.deepSleep += entry.duration
+                    }
+                } else {
+                    // Start new session
+                    sessions.add(SleepSession(
+                        start = entry.startTime,
+                        end = entryEnd,
+                        totalSleep = if (overlayType == OverlayType.Sleep) entry.duration else 0,
+                        deepSleep = if (overlayType == OverlayType.DeepSleep) entry.duration else 0
+                    ))
+                }
+            }
+
+            logger.d {
+                "HEALTH_STATS: $dayName found ${sessions.size} sleep sessions"
+            }
+            sessions.forEachIndexed { index, session ->
+                val durationHours = session.totalSleep / 3600.0
+                val deepHours = session.deepSleep / 3600.0
+                logger.d {
+                    "  Session $index: total=${durationHours}h, deep=${deepHours}h, start=${session.start}, end=${session.end}"
+                }
+            }
+
+            // Find the longest sleep session (main sleep, not naps)
+            val mainSleep = sessions.maxByOrNull { it.totalSleep }
+
+            val totalSleepSeconds = mainSleep?.totalSleep ?: 0L
+            val deepSleepSeconds = mainSleep?.deepSleep ?: 0L
+            val fallAsleepTime = mainSleep?.start?.toInt() ?: 0
+            val wakeupTime = mainSleep?.end?.toInt() ?: 0
+
+            val totalSleepHours = totalSleepSeconds / 3600.0
+            val deepSleepHours = deepSleepSeconds / 3600.0
+
+            logger.i {
+                val sleepHrs = (totalSleepHours * 10).toInt() / 10.0
+                val deepHrs = (deepSleepHours * 10).toInt() / 10.0
+                "HEALTH_STATS: $dayName ($day): sleep=${sleepHrs}h (${totalSleepSeconds}s), deep=${deepHrs}h, entries=${sleepEntries.size}"
+            }
+
+            val payload = sleepPayload(
+                day.startOfDayEpochSeconds(timeZone),
+                totalSleepSeconds.toInt(),
+                deepSleepSeconds.toInt(),
+                fallAsleepTime,
+                wakeupTime
+            )
+            val sent = sendHealthStat(key, payload)
+            if (sent) {
+                successCount++
+                logger.d { "HEALTH_STATS: Successfully sent $dayName sleep data to watch" }
+            } else {
+                logger.w { "HEALTH_STATS: Failed to send $dayName sleep data to watch" }
+            }
+            anySent = anySent || sent
+        }
+
+        logger.i { "HEALTH_STATS: Weekly sleep data: sent $successCount/$MOVEMENT_HISTORY_DAYS days successfully" }
+        return anySent
+    }
+
+    private fun sleepPayload(
+        dayStartEpochSec: Long,
+        sleepDuration: Int,
+        deepSleepDuration: Int,
+        fallAsleepTime: Int,
+        wakeupTime: Int
+    ): UByteArray {
+        val buffer = DataBuffer(SLEEP_PAYLOAD_SIZE).apply { setEndian(Endian.Little) }
+
+        buffer.putUInt(HEALTH_STATS_VERSION) // version
+        buffer.putUInt(dayStartEpochSec.toUInt()) // last_processed_timestamp
+        buffer.putUInt(sleepDuration.toUInt()) // sleep_duration
+        buffer.putUInt(deepSleepDuration.toUInt()) // deep_sleep_duration
+        buffer.putUInt(fallAsleepTime.toUInt()) // fall_asleep_time
+        buffer.putUInt(wakeupTime.toUInt()) // wakeup_time
+        buffer.putUInt(0u) // typical_sleep_duration (we don't calculate this yet)
+        buffer.putUInt(0u) // typical_deep_sleep_duration
+        buffer.putUInt(0u) // typical_fall_asleep_time
+        buffer.putUInt(0u) // typical_wakeup_time
+
+        logger.d {
+            "HEALTH_STATS: Sleep payload - version=$HEALTH_STATS_VERSION, timestamp=$dayStartEpochSec, " +
+                    "sleepDuration=$sleepDuration, deepSleep=$deepSleepDuration, fallAsleep=$fallAsleepTime, wakeup=$wakeupTime"
+        }
+
+        return buffer.array()
     }
 
     private fun movementPayload(dayStartEpochSec: Long, aggregates: HealthAggregates?): UByteArray {
@@ -830,11 +1199,14 @@ class HealthService(
         private const val HEALTH_SLEEP_TAG: UInt = 83u
         private const val HEALTH_OVERLAY_TAG: UInt = 84u
         private const val HEALTH_HR_TAG: UInt = 85u
-        private const val FIFTEEN_MINUTES_MS = 15 * 60_000L
+        private const val TWENTY_FOUR_HOURS_MS = 24 * 60 * 60_000L
         private const val HEALTH_STATS_AVERAGE_DAYS = 30
         private const val MOVEMENT_HISTORY_DAYS = 7
         private const val HEALTH_STATS_BLOB_TIMEOUT_MS = 5_000L
+        private const val HEALTH_SYNC_WAIT_MS = 8_000L
+        private const val HEALTH_SYNC_POLL_MS = 500L
         private const val MOVEMENT_PAYLOAD_SIZE = UInt.SIZE_BYTES * 7
+        private const val SLEEP_PAYLOAD_SIZE = UInt.SIZE_BYTES * 10
         private const val HEALTH_STATS_VERSION: UInt = 1u
         private const val KEY_AVERAGE_DAILY_STEPS = "average_dailySteps"
         private const val KEY_AVERAGE_SLEEP_DURATION = "average_sleepDuration"
@@ -847,6 +1219,16 @@ class HealthService(
                         DayOfWeek.FRIDAY to "friday_movementData",
                         DayOfWeek.SATURDAY to "saturday_movementData",
                         DayOfWeek.SUNDAY to "sunday_movementData",
+                )
+        private val SLEEP_KEYS =
+                mapOf(
+                        DayOfWeek.MONDAY to "monday_sleepData",
+                        DayOfWeek.TUESDAY to "tuesday_sleepData",
+                        DayOfWeek.WEDNESDAY to "wednesday_sleepData",
+                        DayOfWeek.THURSDAY to "thursday_sleepData",
+                        DayOfWeek.FRIDAY to "friday_sleepData",
+                        DayOfWeek.SATURDAY to "saturday_sleepData",
+                        DayOfWeek.SUNDAY to "sunday_sleepData",
                 )
         private val VERSION_FW_3_10_AND_BELOW: UShort = 5u
         private val VERSION_FW_3_11: UShort = 6u

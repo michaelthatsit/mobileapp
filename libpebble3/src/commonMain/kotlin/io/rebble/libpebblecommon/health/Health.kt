@@ -24,6 +24,7 @@ import kotlinx.datetime.toLocalDateTime
 interface HealthServiceAccessor {
     fun requestHealthData(fullSync: Boolean)
     fun sendHealthAveragesToWatch()
+    fun forceHealthDataOverwrite()
 }
 
 /**
@@ -67,6 +68,23 @@ class RealHealthServiceAccessor(
                 logger.i { "Requested manual health averages push" }
             } catch (e: Exception) {
                 logger.e(e) { "Failed to send health averages to watch" }
+            }
+        }
+    }
+
+    override fun forceHealthDataOverwrite() {
+        val services = registry.getAllHealthServices()
+        if (services.isEmpty()) {
+            logger.w { "No connected watches available to force overwrite health data on" }
+            return
+        }
+
+        services.forEach { healthService ->
+            try {
+                healthService.forceHealthDataOverwrite()
+                logger.i { "Forced health data overwrite on watch" }
+            } catch (e: Exception) {
+                logger.e(e) { "Failed to force health data overwrite on watch" }
             }
         }
     }
@@ -146,6 +164,12 @@ class Health(
     override fun sendHealthAveragesToWatch() {
         libPebbleCoroutineScope.launch {
             healthServiceAccessor.sendHealthAveragesToWatch()
+        }
+    }
+
+    override fun forceHealthDataOverwrite() {
+        libPebbleCoroutineScope.launch {
+            healthServiceAccessor.forceHealthDataOverwrite()
         }
     }
 }

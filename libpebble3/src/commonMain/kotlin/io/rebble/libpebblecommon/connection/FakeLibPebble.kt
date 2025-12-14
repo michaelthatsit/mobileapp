@@ -295,6 +295,10 @@ class FakeLibPebble : LibPebble {
         // No-op for fake implementation
     }
 
+    override fun forceHealthDataOverwrite() {
+        // No-op for fake implementation
+    }
+
     override suspend fun getCurrentPosition(): GeolocationPositionResult {
         TODO("Not yet implemented")
     }

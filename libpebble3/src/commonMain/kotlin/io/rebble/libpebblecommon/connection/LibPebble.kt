@@ -109,6 +109,7 @@ interface HealthApi {
     suspend fun getHealthDebugStats(): io.rebble.libpebblecommon.services.HealthDebugStats
     fun requestHealthData(fullSync: Boolean = false)
     fun sendHealthAveragesToWatch()
+    fun forceHealthDataOverwrite()
 }
 
 interface Timeline {

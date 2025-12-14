@@ -68,11 +68,17 @@ interface HealthDao {
 
     @Query(
             """
-            SELECT * FROM overlay_data 
+            SELECT * FROM overlay_data
             WHERE startTime >= :start AND startTime < :end AND type IN (:types)
             """
     )
     suspend fun getOverlayEntries(start: Long, end: Long, types: List<Int>): List<OverlayDataEntity>
+
+    @Query("SELECT * FROM overlay_data ORDER BY startTime ASC")
+    suspend fun getAllOverlayEntries(): List<OverlayDataEntity>
+
+    @Query("DELETE FROM overlay_data WHERE id IN (:ids)")
+    suspend fun deleteOverlayEntriesByIds(ids: List<Long>)
 }
 
 data class HealthAggregates(
