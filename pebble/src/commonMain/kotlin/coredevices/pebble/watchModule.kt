@@ -44,6 +44,8 @@ import io.rebble.libpebblecommon.connection.LibPebble3
 import io.rebble.libpebblecommon.connection.NotificationApps
 import io.rebble.libpebblecommon.connection.TokenProvider
 import io.rebble.libpebblecommon.connection.WebServices
+import io.rebble.libpebblecommon.database.dao.HealthDao
+import io.rebble.libpebblecommon.di.getLibPebbleKoin
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import io.rebble.libpebblecommon.voice.TranscriptionProvider
 import kotlinx.coroutines.GlobalScope
@@ -136,6 +138,11 @@ val watchModule = module {
     viewModelOf(::LockerViewModel)
     viewModelOf(::LockerAppViewModel)
     viewModelOf(::AppstoreSettingsScreenViewModel)
+
+    // Provide HealthDao from LibPebble's internal Koin instance
+    single {
+        getLibPebbleKoin().get<HealthDao>()
+    }
 
     single { SearchClient(appId = "7683OW76EQ", apiKey = "252f4938082b8693a8a9fc0157d1d24f") }
 }

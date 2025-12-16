@@ -9,6 +9,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+
+
 android {
     namespace = "coredevices.pebble"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -117,6 +119,7 @@ kotlin {
                 implementation(libs.coredevices.speex)
                 api(libs.cactus)
                 api(libs.algolia)
+                implementation("io.github.koalaplot:koalaplot-core:0.10.3")
             }
         }
 

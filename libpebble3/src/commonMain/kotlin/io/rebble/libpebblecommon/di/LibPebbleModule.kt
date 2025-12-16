@@ -285,6 +285,11 @@ internal interface LibPebbleKoinComponent : KoinComponent {
     override fun getKoin(): Koin = LibPebbleKoinContext.koin
 }
 
+/**
+ * Public API to access LibPebble's internal Koin instance for getting DAOs and other internal services
+ */
+fun getLibPebbleKoin(): Koin = LibPebbleKoinContext.koin
+
 fun initKoin(
     defaultConfig: LibPebbleConfig,
     webServices: WebServices,
