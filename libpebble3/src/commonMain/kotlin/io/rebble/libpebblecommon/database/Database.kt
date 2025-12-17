@@ -65,7 +65,7 @@ internal const val DATABASE_FILENAME = "libpebble3.db"
         HealthDataEntity::class,
         OverlayDataEntity::class,
     ],
-    version = 26,
+    version = 27,
     autoMigrations = [
         AutoMigration(from = 10, to = 11),
         AutoMigration(from = 11, to = 12),
@@ -83,6 +83,7 @@ internal const val DATABASE_FILENAME = "libpebble3.db"
         AutoMigration(from = 23, to = 24),
         AutoMigration(from = 24, to = 25),
         AutoMigration(from = 25, to = 26),
+        AutoMigration(from = 26, to = 27),  // Added imperialUnits field to WatchSettings
         ],
     exportSchema = true,
 )

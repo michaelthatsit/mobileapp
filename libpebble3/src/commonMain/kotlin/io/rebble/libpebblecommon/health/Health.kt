@@ -144,11 +144,15 @@ class Health(
     private val healthDao: HealthDao,
     private val healthServiceAccessor: HealthServiceAccessor,
 ): HealthApi {
+    private val logger = co.touchlab.kermit.Logger.withTag("Health")
+
     override val healthSettings: Flow<HealthSettings> = watchSettingsDao.getWatchSettings()
 
     override fun updateHealthSettings(healthSettings: HealthSettings) {
+        logger.i { "updateHealthSettings called: heightMm=${healthSettings.heightMm}, weightDag=${healthSettings.weightDag}, ageYears=${healthSettings.ageYears}, gender=${healthSettings.gender}, imperialUnits=${healthSettings.imperialUnits}" }
         libPebbleCoroutineScope.launch {
             watchSettingsDao.setWatchSettings(healthSettings)
+            logger.i { "Health settings saved to database - will sync to watch via BlobDB" }
         }
     }
 
@@ -204,13 +208,14 @@ class Health(
 }
 
 data class HealthSettings(
-    val heightMm: Short = 165,
-    val weightDag: Short = 6500,
+    val heightMm: Short = 1700,  // 170cm in mm (default height)
+    val weightDag: Short = 7000,  // 70kg in decagrams (default weight)
     val trackingEnabled: Boolean = false,
     val activityInsightsEnabled: Boolean = false,
     val sleepInsightsEnabled: Boolean = false,
     val ageYears: Int = 35,
     val gender: HealthGender = HealthGender.Female,
+    val imperialUnits: Boolean = false,  // false = metric (km/kg), true = imperial (mi/lb)
 )
 
 /**

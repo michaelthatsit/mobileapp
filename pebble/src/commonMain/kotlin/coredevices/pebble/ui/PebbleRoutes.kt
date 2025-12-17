@@ -92,6 +92,9 @@ object PebbleNavBarRoutes {
     data object HealthRoute : NavBarRoute
 
     @Serializable
+    data object HealthSettingsRoute : NavBarRoute
+
+    @Serializable
     data object PermissionsRoute : NavBarRoute
 
     @Serializable
@@ -199,6 +202,9 @@ fun NavGraphBuilder.addNavBarRoutes(
     }
     composableWithAnimations<PebbleNavBarRoutes.HealthRoute>(viewModel) {
         HealthScreen(nav, topBarParams)
+    }
+    composableWithAnimations<PebbleNavBarRoutes.HealthSettingsRoute>(viewModel) {
+        HealthSettingsScreen(nav, topBarParams)
     }
     composableWithAnimations<PebbleNavBarRoutes.PermissionsRoute>(viewModel) {
         PermissionsScreen(nav, topBarParams)

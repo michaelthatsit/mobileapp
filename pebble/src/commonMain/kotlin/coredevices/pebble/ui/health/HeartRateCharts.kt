@@ -58,19 +58,11 @@ fun HeartRateChart(healthDao: HealthDao, timeRange: HealthTimeRange) {
     }
 
     if (avgHR > 0) {
-        Column {
-            Text(
-                text = "$avgHR bpm avg",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
-                when (timeRange) {
-                    HealthTimeRange.Daily -> HeartRateDailyChart(hrData)
-                    HealthTimeRange.Weekly -> HeartRateWeeklyChart(hrData)
-                    HealthTimeRange.Monthly -> HeartRateMonthlyChart(hrData)
-                }
+        Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
+            when (timeRange) {
+                HealthTimeRange.Daily -> HeartRateDailyChart(hrData)
+                HealthTimeRange.Weekly -> HeartRateWeeklyChart(hrData)
+                HealthTimeRange.Monthly -> HeartRateMonthlyChart(hrData)
             }
         }
     } else {

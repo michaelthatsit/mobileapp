@@ -79,19 +79,11 @@ fun SleepChart(healthDao: HealthDao, timeRange: HealthTimeRange) {
     }
 
     if (avgSleepHours > 0 || (dailySleepData != null && dailySleepData!!.segments.isNotEmpty()) || stackedSleepData.isNotEmpty()) {
-        Column {
-            Text(
-                text = "%.1f hours avg".format(avgSleepHours),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
-                when (timeRange) {
-                    HealthTimeRange.Daily -> dailySleepData?.let { SleepDailyChart(it) }
-                    HealthTimeRange.Weekly -> SleepWeeklyChart(stackedSleepData)
-                    HealthTimeRange.Monthly -> SleepMonthlyChart(stackedSleepData)
-                }
+        Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
+            when (timeRange) {
+                HealthTimeRange.Daily -> dailySleepData?.let { SleepDailyChart(it) }
+                HealthTimeRange.Weekly -> SleepWeeklyChart(stackedSleepData)
+                HealthTimeRange.Monthly -> SleepMonthlyChart(stackedSleepData)
             }
         }
     } else {

@@ -60,19 +60,11 @@ fun StepsChart(healthDao: HealthDao, timeRange: HealthTimeRange) {
     }
 
     if (stepsData.isNotEmpty()) {
-        Column {
-            Text(
-                text = "${totalSteps.toInt()} steps",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
-                when (timeRange) {
-                    HealthTimeRange.Daily -> StepsDailyChart(stepsData)
-                    HealthTimeRange.Weekly -> StepsWeeklyChart(stepsData)
-                    HealthTimeRange.Monthly -> StepsMonthlyChart(stepsData)
-                }
+        Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
+            when (timeRange) {
+                HealthTimeRange.Daily -> StepsDailyChart(stepsData)
+                HealthTimeRange.Weekly -> StepsWeeklyChart(stepsData)
+                HealthTimeRange.Monthly -> StepsMonthlyChart(stepsData)
             }
         }
     } else {
