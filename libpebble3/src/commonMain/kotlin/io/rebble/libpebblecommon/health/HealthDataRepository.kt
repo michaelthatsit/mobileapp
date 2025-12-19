@@ -88,6 +88,7 @@ private suspend fun fetchWeeklyStepsData(
     val labels = mutableListOf<String>()
     val values = mutableListOf<Float>()
     var total = 0L
+    var totalDaysWithData = 0
 
     // Get the most recent Sunday (start of current/most recent week)
     val weekStartSunday = getPreviousSunday(today)
@@ -101,8 +102,12 @@ private suspend fun fetchWeeklyStepsData(
         val steps = healthDao.getTotalStepsExclusiveEnd(start, end) ?: 0L
         values.add(steps.toFloat())
         total += steps
+        if (steps > 0) {
+            totalDaysWithData++
+        }
     }
-    return Triple(labels, values, total)
+    val average = if (totalDaysWithData > 0) total / totalDaysWithData else 0L
+    return Triple(labels, values, average)
 }
 
 private suspend fun fetchMonthlyStepsData(
@@ -113,6 +118,7 @@ private suspend fun fetchMonthlyStepsData(
     val labels = mutableListOf<String>()
     val values = mutableListOf<Float>()
     var total = 0L
+    var totalDaysWithData = 0
 
     // Get the first day of the current month
     val monthStart = LocalDate(today.year, today.month, 1)
@@ -162,9 +168,11 @@ private suspend fun fetchMonthlyStepsData(
             labels.add(label)
             values.add(weekSteps.toFloat() / daysWithData)
             total += weekSteps
+            totalDaysWithData += daysWithData
         }
     }
-    return Triple(labels, values, total)
+    val average = if (totalDaysWithData > 0) total / totalDaysWithData else 0L
+    return Triple(labels, values, average)
 }
 
 /**

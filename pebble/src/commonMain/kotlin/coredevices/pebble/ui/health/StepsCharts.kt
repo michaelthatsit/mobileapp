@@ -22,7 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.koalaplot.core.bar.DefaultBar
 import io.github.koalaplot.core.bar.DefaultBarPosition
@@ -56,19 +55,31 @@ fun StepsChart(healthDao: HealthDao, timeRange: HealthTimeRange) {
     val healthSettings by libPebble.healthSettings.collectAsState(initial = HealthSettings())
 
     var stepsData by remember { mutableStateOf<List<Pair<String, Float>>>(emptyList()) }
-    var totalSteps by remember { mutableStateOf(0L) }
+    var steps by remember { mutableStateOf(0L) }
     var metrics by remember { mutableStateOf<StepsMetrics?>(null) }
 
     LaunchedEffect(timeRange, healthSettings.imperialUnits) {
         val (labels, values, total) = fetchStepsData(healthDao, timeRange)
         stepsData = labels.zip(values)
-        totalSteps = total
+        steps = total
 
         // Always fetch metrics
         metrics = fetchStepsMetrics(healthDao, timeRange, healthSettings.imperialUnits)
     }
 
     Column {
+        Row(
+            modifier = Modifier
+                .padding(12.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            when (timeRange) {
+                HealthTimeRange.Daily -> StatsTile("Today's steps", steps.toString())
+                HealthTimeRange.Weekly -> StatsTile("Average steps", steps.toString())
+                HealthTimeRange.Monthly -> StatsTile("Average steps", steps.toString())
+            }
+        }
         if (stepsData.isNotEmpty()) {
             Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
                 when (timeRange) {
@@ -284,18 +295,9 @@ private fun StepsDailyChartPreview() {
             "9pm" to 8500f,
             "11pm" to 9200f
         )
-        Column {
             Box(modifier = Modifier.height(200.dp).fillMaxWidth().padding(12.dp)) {
                 StepsDailyChart(fakeDailyData)
             }
-            Row (modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                StatsTile("Distance", "8.3mi")
-                StatsTile("Calories", "2345")
-                StatsTile("Active", "2h 38m")
-            }
-        }
     }
 }
 
