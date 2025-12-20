@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsRun
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Hotel
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
@@ -40,13 +39,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coredevices.pebble.rememberLibPebble
-import coredevices.pebble.ui.health.HeartRateChart
 import coredevices.pebble.ui.health.SleepChart
 import coredevices.pebble.ui.health.StepsChart
-import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import io.rebble.libpebblecommon.health.HealthTimeRange
 import io.rebble.libpebblecommon.database.dao.HealthDao
-import io.rebble.libpebblecommon.metadata.WatchType
 import org.koin.compose.koinInject
 import theme.localHealthColors
 
@@ -83,19 +79,6 @@ fun HealthScreen(
     }
 
     val healthDao: HealthDao = koinInject()
-    val watches by libPebble.watches.collectAsState()
-
-    val connectedDevice = remember(watches) {
-        watches.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
-    }
-
-    val supportsHeartRate = remember(connectedDevice) {
-        connectedDevice?.watchInfo?.platform?.watchType in listOf(
-            WatchType.DIORITE,  // Pebble 2 HR
-            WatchType.EMERY     // Pebble Time 2
-        )
-    }
-
     var timeRange by remember { mutableStateOf(HealthTimeRange.Daily) }
 
     val healthColors = localHealthColors.current
@@ -121,17 +104,6 @@ fun HealthScreen(
             iconTint = healthColors.steps
         ) {
             StepsChart(healthDao, timeRange)
-        }
-
-        // Heart rate chart (only on devices that support it)
-        if (supportsHeartRate) {
-            HealthMetricCard(
-                title = "Heart Rate",
-                icon = Icons.Filled.Favorite,
-                iconTint = healthColors.heartRate
-            ) {
-                HeartRateChart(healthDao, timeRange)
-            }
         }
 
         // Sleep chart
