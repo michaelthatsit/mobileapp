@@ -64,6 +64,7 @@ class HealthService(
     private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null) // Date of last today movement update
     private val lastTodayUpdateTime = MutableStateFlow(0L) // Epoch millis of last today update
     private val lastDataReceptionTime = MutableStateFlow(0L) // Epoch millis of last data reception from watch
+    private val acceptSleepData = MutableStateFlow(true) // When false, drops incoming sleep data (used during reconciliation)
 
     companion object {
         private val logger = Logger.withTag("HealthService")
@@ -166,6 +167,36 @@ class HealthService(
     }
 
     /**
+     * Force sync health data from the last 24 hours.
+     * Pulls all data from the watch including sleep data.
+     */
+    fun forceSyncLast24Hours() {
+        if (!isActiveConnection("force 24h sync")) return
+        scope.launch {
+            logger.i { "HEALTH_SERVICE: Force syncing last 24 hours of health data" }
+
+            // Request data from 24 hours ago (86400 seconds)
+            val packet = HealthSyncOutgoingPacket.RequestSync(86400u)
+            protocolHandler.send(packet)
+
+            // Wait for data to arrive (with timeout)
+            val previousLatest = healthDao.getLatestTimestamp() ?: 0L
+            val newDataArrived = waitForNewerHealthData(previousLatest)
+
+            if (newDataArrived) {
+                logger.i { "HEALTH_SERVICE: Force sync completed - new data received" }
+                // Wait to ensure all async database writes complete
+                delay(RECONCILE_DELAY_MS)
+                // Update stats with the new data
+                updateHealthStats()
+                lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            } else {
+                logger.i { "HEALTH_SERVICE: Force sync completed - no new data from watch" }
+            }
+        }
+    }
+
+    /**
      * Get current health statistics for debugging
      */
     suspend fun getHealthDebugStats(): HealthDebugStats {
@@ -212,21 +243,30 @@ class HealthService(
             "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)"
         }
 
-        // Always request any new data from the watch first
-        sendHealthDataRequest(fullSync = false)
-        val newDataArrived = waitForNewerHealthData(baselineTimestamp)
+        try {
+            // Temporarily reject sleep data during reconciliation to prevent stale data from idle watches
+            acceptSleepData.value = false
+            logger.i { "HEALTH_SYNC: Blocking sleep data during reconciliation - phone DB is source of truth" }
 
-        if (newDataArrived) {
-            logger.i { "HEALTH_SYNC: Newer health data pulled from watch and merged with database" }
-            // Wait to ensure all async database writes complete before we read back for stats
-            delay(RECONCILE_DELAY_MS)
+            // Request steps/activity data from the watch (sleep data will be filtered)
+            sendHealthDataRequest(fullSync = false)
+            val newDataArrived = waitForNewerHealthData(baselineTimestamp)
+
+            if (newDataArrived) {
+                logger.i { "HEALTH_SYNC: Newer steps/activity data pulled from watch and merged with database" }
+                // Wait to ensure all async database writes complete before we read back for stats
+                delay(RECONCILE_DELAY_MS)
+            }
+        } finally {
+            // Re-enable sleep data acceptance after reconciliation
+            acceptSleepData.value = true
         }
 
         // Push full stats to watch on connection (assume watch may have switched or been reset)
-        // This overwrites the watch with our database, which now contains the merged best data
-        // But throttle to avoid excessive updates if connection drops/reconnects frequently
+        // This overwrites the watch with our phone database
+        // Throttle to avoid excessive updates if connection drops/reconnects frequently
         if (hoursSinceLastFullUpdate >= FULL_STATS_THROTTLE_HOURS) {
-            logger.i { "HEALTH_SYNC: Pushing merged database stats to watch (treating as new/switched watch)" }
+            logger.i { "HEALTH_SYNC: Pushing phone database to watch (treating as new/switched watch)" }
             // Reset today's update flag so it can be updated again if needed
             lastTodayUpdateDate.value = null
             updateHealthStats()
@@ -503,7 +543,24 @@ class HealthService(
     }
 
     private suspend fun processOverlayData(payload: ByteArray, itemSize: UShort) {
-        val records = parseOverlayData(payload, itemSize)
+        val allRecords = parseOverlayData(payload, itemSize)
+        if (allRecords.isEmpty()) return
+
+        // Filter out sleep records if we're blocking sleep data (during reconciliation)
+        val records = if (acceptSleepData.value) {
+            allRecords
+        } else {
+            allRecords.filter { record ->
+                val overlayType = io.rebble.libpebblecommon.health.OverlayType.fromValue(record.type)
+                overlayType != null && !isSleepType(overlayType)
+            }.also {
+                val droppedCount = allRecords.size - it.size
+                if (droppedCount > 0) {
+                    logger.i { "HEALTH_DATA: Dropped $droppedCount sleep records during reconciliation (phone DB is source of truth)" }
+                }
+            }
+        }
+
         if (records.isEmpty()) return
 
         val sleepRecords = records.filter { type ->

@@ -1698,6 +1698,24 @@ fun HealthDebugSection(libPebble: LibPebble) {
                     }
 
                     Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                isSyncing = true
+                                libPebble.forceSyncLast24Hours()
+                                kotlinx.coroutines.delay(5000)
+                                refreshStats()
+                                isSyncing = false
+                            }
+                        },
+                        enabled = !isLoading && !isSyncing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Force Sync Last 24 Hours", fontSize = 12.sp)
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         "Filter logs with 'HEALTH_' to see detailed sync information",
                         style = MaterialTheme.typography.bodySmall,

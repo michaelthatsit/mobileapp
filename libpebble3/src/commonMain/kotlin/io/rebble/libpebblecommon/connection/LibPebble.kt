@@ -113,6 +113,7 @@ interface HealthApi {
     fun requestHealthData(fullSync: Boolean = false)
     fun sendHealthAveragesToWatch()
     fun forceHealthDataOverwrite()
+    fun forceSyncLast24Hours()
     fun setHealthScreenActive(active: Boolean)
 }
 

@@ -119,7 +119,10 @@ internal fun parseStepsData(payload: ByteArray, itemSize: UShort): List<HealthDa
 }
 
 /**
- * Parses overlay data (sleep, activities) from the watch's health payload
+ * Parses overlay data (sleep, activities) from the watch's health payload.
+ *
+ * All overlay data is accepted since only the active watch can send data
+ * (enforced by isActiveConnection() check in HealthService).
  */
 internal fun parseOverlayData(payload: ByteArray, itemSize: UShort): List<OverlayDataEntity> {
     if (payload.isEmpty() || itemSize.toInt() == 0) {
@@ -176,23 +179,20 @@ internal fun parseOverlayData(payload: ByteArray, itemSize: UShort): List<Overla
             distanceCm = buffer.getUShort().toInt()
         }
 
-        // Reject incoming sleep data from the watch; we treat the phone DB as the source of truth
-        if (type.isSleep()) {
-            logger.d { "Dropping incoming sleep overlay (start=$startTime, duration=$duration, type=$type)" }
-        } else {
-            records.add(
-                OverlayDataEntity(
-                    startTime = startTime.toLong(),
-                    duration = duration.toLong(),
-                    type = type.value,
-                    steps = steps,
-                    restingKiloCalories = restingKiloCalories,
-                    activeKiloCalories = activeKiloCalories,
-                    distanceCm = distanceCm,
-                    offsetUTC = offsetUTC.toInt()
-                )
+        // Accept all overlay data (sleep, activities, etc.)
+        // Note: Only the active watch can send data due to isActiveConnection() check in HealthService
+        records.add(
+            OverlayDataEntity(
+                startTime = startTime.toLong(),
+                duration = duration.toLong(),
+                type = type.value,
+                steps = steps,
+                restingKiloCalories = restingKiloCalories,
+                activeKiloCalories = activeKiloCalories,
+                distanceCm = distanceCm,
+                offsetUTC = offsetUTC.toInt()
             )
-        }
+        )
 
         val consumed = buffer.readPosition - itemStart
         val expected = itemSize.toInt()

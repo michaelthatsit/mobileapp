@@ -1,5 +1,11 @@
 package coredevices.pebble.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,8 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.Hotel
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -31,9 +40,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +54,8 @@ import coredevices.pebble.ui.health.SleepChart
 import coredevices.pebble.ui.health.StepsChart
 import io.rebble.libpebblecommon.health.HealthTimeRange
 import io.rebble.libpebblecommon.database.dao.HealthDao
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import theme.localHealthColors
 
@@ -56,10 +69,67 @@ fun HealthScreen(
     topBarParams: TopBarParams
 ) {
     val libPebble = rememberLibPebble()
+    val healthDao: HealthDao = koinInject()
+    val scope = rememberCoroutineScope()
+    var isSyncing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         topBarParams.searchAvailable(false)
         topBarParams.actions {
+            // Sync button with animation
+            IconButton(
+                onClick = {
+                    scope.launch {
+                        isSyncing = true
+
+                        // Get baseline timestamp before sync
+                        val baselineTimestamp = healthDao.getLatestTimestamp() ?: 0L
+
+                        // Trigger the force sync
+                        libPebble.forceSyncLast24Hours()
+
+                        // Poll for new data (timeout after 10 seconds)
+                        var attempts = 0
+                        val maxAttempts = 20 // 20 attempts * 500ms = 10 seconds
+                        var newDataReceived = false
+
+                        while (attempts < maxAttempts && !newDataReceived) {
+                            delay(500)
+                            val currentTimestamp = healthDao.getLatestTimestamp() ?: 0L
+                            if (currentTimestamp > baselineTimestamp) {
+                                newDataReceived = true
+                                // Give it a bit more time for all data to process
+                                delay(1000)
+                            }
+                            attempts++
+                        }
+
+                        isSyncing = false
+                    }
+                },
+                enabled = !isSyncing
+            ) {
+                if (isSyncing) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "sync")
+                    val rotation by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1000, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "rotation"
+                    )
+                    Icon(
+                        Icons.Filled.Sync,
+                        contentDescription = "Syncing...",
+                        modifier = Modifier.rotate(rotation)
+                    )
+                } else {
+                    Icon(Icons.Filled.Sync, contentDescription = "Sync Health Data")
+                }
+            }
+
             IconButton(onClick = { navBarNav.navigateTo(PebbleNavBarRoutes.HealthSettingsRoute) }) {
                 Icon(Icons.Filled.Settings, contentDescription = "Health Settings")
             }
@@ -78,7 +148,6 @@ fun HealthScreen(
         }
     }
 
-    val healthDao: HealthDao = koinInject()
     var timeRange by remember { mutableStateOf(HealthTimeRange.Daily) }
 
     val healthColors = localHealthColors.current

@@ -315,6 +315,10 @@ class FakeLibPebble : LibPebble {
         // No-op for fake implementation
     }
 
+    override fun forceSyncLast24Hours() {
+        // No-op for fake implementation
+    }
+
     override fun setHealthScreenActive(active: Boolean) {
         // No-op for fake implementation
     }
