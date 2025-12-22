@@ -156,9 +156,7 @@ fun AppTheme(
         CoreAppColorScheme.Light -> lightScheme
         CoreAppColorScheme.Grey -> greyScheme
     }
-    CompositionLocalProvider(
-        LocalExtendedColors provides extendedColors
-    ) {
+    CompositionLocalProvider(LocalExtendedColors provides extendedColors) {
         MaterialTheme(
             colorScheme = materialColorScheme,
             typography = AppTypography(),

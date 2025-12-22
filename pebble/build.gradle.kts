@@ -9,8 +9,6 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-
-
 android {
     namespace = "coredevices.pebble"
     compileSdk = libs.versions.android.compileSdk.get().toInt()

@@ -200,7 +200,6 @@ fun NavGraphBuilder.addNavBarRoutes(
     composableWithAnimations<PebbleNavBarRoutes.WatchSettingsRoute>(viewModel) {
         WatchSettingsScreen(nav, topBarParams, experimentalRoute)
     }
-
     composableWithAnimations<PebbleNavBarRoutes.PermissionsRoute>(viewModel) {
         PermissionsScreen(nav, topBarParams)
     }
