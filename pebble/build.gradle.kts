@@ -121,7 +121,6 @@ kotlin {
                 api(libs.cactus)
                 api(libs.algolia)
                 implementation(libs.reorderable)
-                implementation("io.github.koalaplot:koalaplot-core:0.10.3")
             }
         }
 

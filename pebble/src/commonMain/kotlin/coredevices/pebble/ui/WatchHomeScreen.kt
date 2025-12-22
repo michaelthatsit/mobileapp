@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.BrowseGallery
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.MonitorHeart
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
@@ -83,23 +82,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
-import org.jetbrains.compose.resources.InternalResourceApi
-import org.jetbrains.compose.resources.ResourceItem
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
-
-// Workaround for Compose resources caching issue with newly added "health" string
-@OptIn(InternalResourceApi::class)
-private val healthStringResource: StringResource by lazy {
-    StringResource(
-        "string:health",
-        "health",
-        setOf(ResourceItem(setOf(), "composeResources/coreapp.pebble.generated.resources/values/strings.commonMain.cvr", 111, 22))
-    )
-}
 
 class WatchHomeViewModel : ViewModel() {
     val selectedTab = mutableStateOf(WatchHomeNavTab.Watches)
@@ -367,11 +354,6 @@ enum class WatchHomeNavTab(
         Res.string.notifications,
         Icons.Outlined.Notifications,
         PebbleNavBarRoutes.NotificationsRoute
-    ),
-    Health(
-        healthStringResource,
-        Icons.Outlined.MonitorHeart,
-        PebbleNavBarRoutes.HealthRoute
     ),
     Settings(
         Res.string.settings,

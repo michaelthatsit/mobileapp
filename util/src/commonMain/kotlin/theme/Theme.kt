@@ -105,13 +105,6 @@ val darkExtendedColors = ExtendedColors(
     onSuccess = onSuccessDark,
 )
 
-val healthColors = HealthColors(
-    steps = coreOrange,
-    heartRate = Color(0xFF9C27B0),
-    lightSleep = Color(0xFF55C1F5),
-    deepSleep = Color(0xFF3E8CF8)
-)
-
 @Immutable
 data class ColorFamily(
     val color: Color,
@@ -164,8 +157,7 @@ fun AppTheme(
         CoreAppColorScheme.Grey -> greyScheme
     }
     CompositionLocalProvider(
-        LocalExtendedColors provides extendedColors,
-        localHealthColors provides healthColors
+        LocalExtendedColors provides extendedColors
     ) {
         MaterialTheme(
             colorScheme = materialColorScheme,
