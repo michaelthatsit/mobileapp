@@ -116,13 +116,13 @@ expect object DatabaseConstructor : RoomDatabaseConstructor<Database> {
 
 fun getRoomDatabase(ctx: AppContext): Database {
     return getDatabaseBuilder(ctx)
-            // .addMigrations()
-            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
-            // V7 required a full re-create.
-            .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
-            .setDriver(BundledSQLiteDriver())
-            .setQueryCoroutineContext(Dispatchers.IO)
-            .build()
+        //.addMigrations()
+        .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+        // V7 required a full re-create.
+        .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+        .setDriver(BundledSQLiteDriver())
+        .setQueryCoroutineContext(Dispatchers.IO)
+        .build()
 }
 
 internal expect fun getDatabaseBuilder(ctx: AppContext): RoomDatabase.Builder<Database>
