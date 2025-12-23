@@ -6,6 +6,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.Month
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.atTime
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
@@ -16,6 +17,25 @@ import kotlin.time.Duration.Companion.hours
 /**
  * Date/time utilities for health data processing
  */
+
+/**
+ * Extension function to convert a LocalDate to epoch seconds at start of day.
+ */
+fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long =
+    this.atStartOfDayIn(timeZone).epochSeconds
+
+/**
+ * Calculates the sleep search window for a given day.
+ * Sleep sessions are searched from 6 PM the previous day to 2 PM the current day.
+ *
+ * @param dayStartEpochSeconds The start of the target day in epoch seconds
+ * @return Pair of (searchStart, searchEnd) in epoch seconds
+ */
+fun calculateSleepSearchWindow(dayStartEpochSeconds: Long): Pair<Long, Long> {
+    val searchStart = dayStartEpochSeconds - (HealthConstants.SLEEP_WINDOW_START_OFFSET_HOURS * 3600)
+    val searchEnd = dayStartEpochSeconds + (HealthConstants.SLEEP_WINDOW_END_OFFSET_HOURS * 3600)
+    return Pair(searchStart, searchEnd)
+}
 
 /**
  * Checks if a year is a leap year.

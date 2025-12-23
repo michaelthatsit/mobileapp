@@ -8,6 +8,7 @@ import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
 import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
 import io.rebble.libpebblecommon.database.dao.removeDuplicateOverlayEntries
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
+import io.rebble.libpebblecommon.health.isSleepType
 import io.rebble.libpebblecommon.packets.DataLoggingIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
@@ -183,44 +184,6 @@ class HealthService(
                 logger.i { "HEALTH_SERVICE: Force sync completed - no new data from watch" }
             }
         }
-    }
-
-    /**
-     * Get current health statistics for debugging
-     */
-    suspend fun getHealthDebugStats(): HealthDebugStats {
-        val timeZone = TimeZone.currentSystemDefault()
-        val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
-        val startDate = today.minus(DatePeriod(days = HEALTH_STATS_AVERAGE_DAYS))
-
-        val todayStart = today.startOfDayEpochSeconds(timeZone)
-        val todayEnd = today.plus(kotlinx.datetime.DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone)
-
-        val averages = calculateHealthAverages(healthDao, startDate, today, timeZone)
-        val todaySteps = healthDao.getTotalStepsExclusiveEnd(todayStart, todayEnd) ?: 0L
-        val latestTimestamp = healthDao.getLatestTimestamp()
-
-        val daysOfData = maxOf(averages.stepDaysWithData, averages.sleepDaysWithData)
-
-        // Calculate last night's sleep (sleep sessions from ~6pm yesterday to ~2pm today)
-        val yesterday = today.minus(kotlinx.datetime.DatePeriod(days = 1))
-        val sleepWindowStart = yesterday.startOfDayEpochSeconds(timeZone) + (18 * 3600) // 6pm yesterday
-        val sleepWindowEnd = todayStart + (14 * 3600) // 2pm today
-
-        val lastNightSleepMinutes = (healthDao.getTotalSleepMinutes(sleepWindowStart, sleepWindowEnd) ?: 0L) +
-                                    (healthDao.getDeepSleepMinutes(sleepWindowStart, sleepWindowEnd) ?: 0L)
-        val lastNightSleepHours = if (lastNightSleepMinutes > 0) lastNightSleepMinutes / 60f else null
-
-        return HealthDebugStats(
-            totalSteps30Days = averages.totalSteps,
-            averageStepsPerDay = averages.averageStepsPerDay,
-            totalSleepSeconds30Days = averages.totalSleepSeconds,
-            averageSleepSecondsPerDay = averages.averageSleepSecondsPerDay,
-            todaySteps = todaySteps,
-            lastNightSleepHours = lastNightSleepHours,
-            latestDataTimestamp = latestTimestamp,
-            daysOfData = daysOfData
-        )
     }
 
     private fun isActiveConnection(reason: String): Boolean {
@@ -579,10 +542,7 @@ class HealthService(
     }
 
     private fun isSleepType(type: io.rebble.libpebblecommon.health.OverlayType): Boolean =
-        type == io.rebble.libpebblecommon.health.OverlayType.Sleep ||
-                type == io.rebble.libpebblecommon.health.OverlayType.DeepSleep ||
-                type == io.rebble.libpebblecommon.health.OverlayType.Nap ||
-                type == io.rebble.libpebblecommon.health.OverlayType.DeepNap
+        type.isSleepType()
 
     private suspend fun updateHealthStats() {
         if (!isActiveConnection("health stats update")) return
@@ -617,6 +577,3 @@ data class HealthDebugStats(
     val latestDataTimestamp: Long?,
     val daysOfData: Int
 )
-
-private fun kotlinx.datetime.LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long =
-    this.atStartOfDayIn(timeZone).epochSeconds

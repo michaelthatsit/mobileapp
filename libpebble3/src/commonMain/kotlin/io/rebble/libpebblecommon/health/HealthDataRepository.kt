@@ -202,15 +202,38 @@ suspend fun fetchHeartRateData(
     val today = Clock.System.now().toLocalDateTime(timeZone).date
 
     return when (timeRange) {
-        HealthTimeRange.Daily -> {
-            val labels = (0..23).map { hour -> String.format("%02d:00", hour) }
-            val values = List(24) { 0f }
-            Triple(labels, values, 0)
-        }
-
+        HealthTimeRange.Daily -> fetchDailyHeartRateData(healthDao, today, timeZone)
         HealthTimeRange.Weekly -> fetchWeeklyHeartRateData(healthDao, today, timeZone)
         HealthTimeRange.Monthly -> fetchMonthlyHeartRateData(healthDao, today, timeZone)
     }
+}
+
+private suspend fun fetchDailyHeartRateData(
+    healthDao: HealthDao,
+    today: LocalDate,
+    timeZone: TimeZone
+): Triple<List<String>, List<Float>, Int> {
+    val labels = (0..23).map { hour -> String.format("%02d:00", hour) }
+    val values = mutableListOf<Float>()
+    var totalHR = 0
+    var count = 0
+
+    val todayStart = today.atStartOfDayIn(timeZone).epochSeconds
+
+    repeat(24) { hour ->
+        val start = todayStart + (hour * 3600)
+        val end = start + 3600
+
+        val avgHR = healthDao.getAverageHeartRate(start, end)?.toInt() ?: 0
+        values.add(avgHR.toFloat())
+        if (avgHR > 0) {
+            totalHR += avgHR
+            count++
+        }
+    }
+
+    val avg = if (count > 0) totalHR / count else 0
+    return Triple(labels, values, avg)
 }
 
 private suspend fun fetchWeeklyHeartRateData(
@@ -234,7 +257,7 @@ private suspend fun fetchWeeklyHeartRateData(
         val end = day.plus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds
 
         // Get average HR for this day from health_data table
-        val avgHR = healthDao.getAverageSteps(start, end)?.toInt() ?: 0
+        val avgHR = healthDao.getAverageHeartRate(start, end)?.toInt() ?: 0
         values.add(avgHR.toFloat())
         if (avgHR > 0) {
             sum += avgHR
@@ -290,7 +313,7 @@ private suspend fun fetchMonthlyHeartRateData(
             val day = weekStart.plus(DatePeriod(days = dayOffset))
             val start = day.atStartOfDayIn(timeZone).epochSeconds
             val end = day.plus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds
-            val avgHR = healthDao.getAverageSteps(start, end)?.toInt() ?: 0
+            val avgHR = healthDao.getAverageHeartRate(start, end)?.toInt() ?: 0
 
             if (avgHR > 0) {
                 weekSum += avgHR
@@ -322,12 +345,10 @@ suspend fun fetchDailySleepData(
     val timeZone = TimeZone.currentSystemDefault()
     val today = Clock.System.now().toLocalDateTime(timeZone).date.minus(DatePeriod(days = offset))
 
-    // Search from 6 PM yesterday to 2 PM today
-    val searchStart = today.minus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds + (18 * 3600)
-    val searchEnd = today.atStartOfDayIn(timeZone).epochSeconds + (14 * 3600)
-
-    val sleepTypes = listOf(OverlayType.Sleep.value, OverlayType.DeepSleep.value)
-    val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+    // Use standardized sleep window calculation
+    val todayStart = today.atStartOfDayIn(timeZone).epochSeconds
+    val (searchStart, searchEnd) = calculateSleepSearchWindow(todayStart)
+    val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, HealthConstants.SLEEP_TYPES)
         .sortedBy { it.startTime }
 
     if (sleepEntries.isEmpty()) {
@@ -400,11 +421,9 @@ private suspend fun fetchWeeklySleepData(
         val day = weekStartSunday.plus(DatePeriod(days = offset))
         val label = day.dayOfWeek.name.take(3)
 
-        val searchStart = day.minus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds + (18 * 3600)
-        val searchEnd = day.atStartOfDayIn(timeZone).epochSeconds + (14 * 3600)
-
-        val sleepTypes = listOf(OverlayType.Sleep.value, OverlayType.DeepSleep.value)
-        val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+        val dayStart = day.atStartOfDayIn(timeZone).epochSeconds
+        val (searchStart, searchEnd) = calculateSleepSearchWindow(dayStart)
+        val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, HealthConstants.SLEEP_TYPES)
 
         val lightSleepSeconds = sleepEntries.filter { OverlayType.fromValue(it.type) == OverlayType.Sleep }
             .sumOf { it.duration }
@@ -468,11 +487,9 @@ private suspend fun fetchMonthlySleepData(
 
         repeat(7) { dayOffset ->
             val day = weekStart.plus(DatePeriod(days = dayOffset))
-            val searchStart = day.minus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds + (18 * 3600)
-            val searchEnd = day.atStartOfDayIn(timeZone).epochSeconds + (14 * 3600)
-
-            val sleepTypes = listOf(OverlayType.Sleep.value, OverlayType.DeepSleep.value)
-            val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+            val dayStart = day.atStartOfDayIn(timeZone).epochSeconds
+            val (searchStart, searchEnd) = calculateSleepSearchWindow(dayStart)
+            val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, HealthConstants.SLEEP_TYPES)
 
             weekLightSleepSeconds += sleepEntries.filter { OverlayType.fromValue(it.type) == OverlayType.Sleep }
                 .sumOf { it.duration }

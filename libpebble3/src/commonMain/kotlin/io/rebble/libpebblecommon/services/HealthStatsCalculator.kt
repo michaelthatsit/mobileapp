@@ -2,6 +2,7 @@ package io.rebble.libpebblecommon.services
 
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
+import io.rebble.libpebblecommon.health.HealthConstants
 import io.rebble.libpebblecommon.health.OverlayType
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.Instant
@@ -35,7 +36,7 @@ internal suspend fun calculateHealthAverages(
     val sleepOverlays = healthDao.getOverlayEntries(
         startEpoch,
         endEpoch,
-        sleepTypes
+        HealthConstants.SLEEP_TYPES
     )
 
     val mergedSleepIntervals = mergeIntervalsSeconds(sleepOverlays, timeZone, endEpoch)
@@ -79,11 +80,6 @@ internal suspend fun calculateHealthAverages(
         rangeDays = rangeDays,
     )
 }
-
-private val sleepTypes = listOf(
-    OverlayType.Sleep.value,
-    OverlayType.DeepSleep.value,
-)
 
 private data class MergedIntervals(
     val totalSeconds: Long,

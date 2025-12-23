@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AppSettingsAlt
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -36,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -107,7 +105,6 @@ import io.rebble.libpebblecommon.connection.KnownPebbleDevice
 import io.rebble.libpebblecommon.connection.LibPebble
 import io.rebble.libpebblecommon.health.HealthSettings
 import io.rebble.libpebblecommon.js.PKJSApp
-import io.rebble.libpebblecommon.services.HealthDebugStats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
@@ -253,6 +250,7 @@ fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams, experi
         }
         var showBtClassicInfoDialog by remember { mutableStateOf(false) }
         var showLockerImportDialog by remember { mutableStateOf(false) }
+        var showHealthStatsDialog by remember { mutableStateOf(false) }
         var debugOptionsEnabled by remember { mutableStateOf(settings.showDebugOptions()) }
         var speechRecognitionEnabled by mutableStateOf(
             CactusSTTMode.fromId(settings.getInt(SettingsKeys.KEY_CACTUS_MODE, 0))
@@ -305,6 +303,12 @@ fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams, experi
                     else -> RequestedSTTMode.Enabled(mode, model)
                 },
                 debugOptionsEnabled
+            )
+        }
+        if (showHealthStatsDialog) {
+            HealthStatsDialog(
+                libPebble = libPebble,
+                onDismissRequest = { showHealthStatsDialog = false },
             )
         }
         if (showBtClassicInfoDialog) {
@@ -814,12 +818,13 @@ please disable the option.""".trimIndent(),
                         )
                     },
                 ),
-                SettingsItem(
-                    title = "Health Statistics",
+                basicSettingsActionItem(
+                    title = "View debug stats",
+                    description = "Health statistics and averages",
                     section = Section.Health,
-                    keywords = "health steps sleep stats",
-                    item = {
-                        HealthStatsCard(libPebble)
+                    keywords = "health steps sleep stats debug",
+                    action = {
+                        showHealthStatsDialog = true
                     },
                 ),
                 basicSettingsToggleItem(
@@ -1549,124 +1554,6 @@ fun STTModeDialogPreview() {
             ),
             showModelSelection = true,
         )
-    }
-}
-
-@Composable
-fun HealthStatsCard(libPebble: LibPebble) {
-    val scope = rememberCoroutineScope()
-    var stats by remember { mutableStateOf<HealthDebugStats?>(null) }
-    var isRefreshing by remember { mutableStateOf(false) }
-
-    fun syncAndRefresh() {
-        scope.launch {
-            try {
-                isRefreshing = true
-                // Pull latest data from watch
-                libPebble.requestHealthData(fullSync = false)
-                kotlinx.coroutines.delay(3000) // Wait for sync
-                // Update stats
-                stats = libPebble.getHealthDebugStats()
-                // Send updated averages back to watch
-                libPebble.sendHealthAveragesToWatch()
-            } catch (e: Exception) {
-                Logger.e("HealthStatsCard", e) { "Failed to sync health data" }
-            } finally {
-                isRefreshing = false
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        try {
-            stats = libPebble.getHealthDebugStats()
-        } catch (e: Exception) {
-            Logger.e("HealthStatsCard", e) { "Failed to load health stats" }
-        }
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header row with title and refresh button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Statistics",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                if (isRefreshing) {
-                    CircularProgressIndicator(modifier = Modifier.height(24.dp).width(24.dp))
-                } else {
-                    IconButton(onClick = { syncAndRefresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh health data")
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            if (stats != null) {
-                val s = stats!!
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Today's Steps
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Today's Steps", style = MaterialTheme.typography.bodyMedium)
-                        Text("${s.todaySteps}", style = MaterialTheme.typography.bodyMedium)
-                    }
-
-                    // 30d Avg Steps
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Average", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${s.averageStepsPerDay}/day", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    // Last Night's Sleep
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Last Night's Sleep", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            s.lastNightSleepHours?.let { String.format("%.1fh", it) } ?: "--",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (s.lastNightSleepHours != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // 30d Avg Sleep
-                    val avgSleepHrs = s.averageSleepSecondsPerDay / 3600.0
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Average", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${String.format("%.1f", avgSleepHrs)}h/night", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else {
-                Text(
-                    "Loading health statistics...",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
     }
 }
 

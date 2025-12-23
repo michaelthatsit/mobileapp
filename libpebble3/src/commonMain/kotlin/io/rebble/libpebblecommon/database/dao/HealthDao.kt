@@ -49,6 +49,9 @@ interface HealthDao {
     @Query("SELECT AVG(steps) FROM health_data WHERE timestamp >= :start AND timestamp <= :end")
     suspend fun getAverageSteps(start: Long, end: Long): Double?
 
+    @Query("SELECT AVG(heartRate) FROM health_data WHERE timestamp >= :start AND timestamp < :end AND heartRate > 0")
+    suspend fun getAverageHeartRate(start: Long, end: Long): Double?
+
     @Query("SELECT COUNT(*) FROM health_data WHERE timestamp >= :start AND timestamp <= :end")
     suspend fun hasDataForRange(start: Long, end: Long): Int
 

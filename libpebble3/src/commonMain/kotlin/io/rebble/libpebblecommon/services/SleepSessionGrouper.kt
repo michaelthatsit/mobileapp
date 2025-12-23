@@ -2,7 +2,9 @@ package io.rebble.libpebblecommon.services
 
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
+import io.rebble.libpebblecommon.health.HealthConstants
 import io.rebble.libpebblecommon.health.OverlayType
+import io.rebble.libpebblecommon.health.calculateSleepSearchWindow
 
 /**
  * Represents a grouped sleep session combining multiple sleep/deep sleep entries
@@ -70,11 +72,9 @@ internal suspend fun fetchAndGroupDailySleep(
     timeZone: kotlinx.datetime.TimeZone
 ): SleepSession? {
     // Sleep for "today" means you went to bed last night (6 PM yesterday) and woke up this morning/afternoon (2 PM today)
-    val searchStart = dayStartEpochSec - (6 * 3600) // 6 PM yesterday (subtract 6 hours from start of day)
-    val searchEnd = dayStartEpochSec + (14 * 3600) // 2 PM today
+    val (searchStart, searchEnd) = calculateSleepSearchWindow(dayStartEpochSec)
 
-    val sleepTypes = listOf(OverlayType.Sleep.value, OverlayType.DeepSleep.value)
-    val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, sleepTypes)
+    val sleepEntries = healthDao.getOverlayEntries(searchStart, searchEnd, HealthConstants.SLEEP_TYPES)
 
     val sessions = groupSleepSessions(sleepEntries)
 
@@ -82,4 +82,4 @@ internal suspend fun fetchAndGroupDailySleep(
     return sessions.maxByOrNull { it.totalSleep }
 }
 
-private const val SLEEP_SESSION_GAP_SECONDS = 3600L // 1 hour
+private const val SLEEP_SESSION_GAP_SECONDS = HealthConstants.SLEEP_SESSION_GAP_HOURS * 3600L
