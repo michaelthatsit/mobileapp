@@ -32,6 +32,7 @@ import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import io.rebble.libpebblecommon.di.initKoin
 import io.rebble.libpebblecommon.health.Health
 import io.rebble.libpebblecommon.health.HealthSettings
+import io.rebble.libpebblecommon.health.HealthDebugStats
 import io.rebble.libpebblecommon.js.JsTokenUtil
 import io.rebble.libpebblecommon.locker.AppBasicProperties
 import io.rebble.libpebblecommon.locker.AppType
@@ -48,9 +49,6 @@ import io.rebble.libpebblecommon.time.TimeChanged
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import io.rebble.libpebblecommon.voice.TranscriptionProvider
 import io.rebble.libpebblecommon.web.LockerModel
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.time.Duration
-import kotlin.uuid.Uuid
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,9 +57,11 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.io.files.Path
 import org.koin.core.Koin
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.time.Duration
+import kotlin.uuid.Uuid
 
 data class PhoneCapabilities(val capabilities: Set<ProtocolCapsFlag>)
-
 data class PlatformFlags(val flags: UInt)
 
 typealias PebbleDevices = StateFlow<List<PebbleDevice>>
@@ -72,23 +72,9 @@ sealed class PebbleConnectionEvent {
 }
 
 @Stable
-interface LibPebble :
-        Scanning,
-        RequestSync,
-        LockerApi,
-        NotificationApps,
-        CallManagement,
-        Calendar,
-        OtherPebbleApps,
-        PKJSToken,
-        Watches,
-        Errors,
-        Contacts,
-        AnalyticsEvents,
-        HealthApi,
-        SystemGeolocation,
-        Timeline,
-        Vibrations {
+interface LibPebble : Scanning, RequestSync, LockerApi, NotificationApps, CallManagement, Calendar, 
+    OtherPebbleApps, PKJSToken, Watches, Errors, Contacts, AnalyticsEvents, HealthApi, 
+    SystemGeolocation, Timeline, Vibrations {
     fun init()
 
     val config: StateFlow<LibPebbleConfig>
@@ -96,10 +82,7 @@ interface LibPebble :
 
     // Generally, use these. They will act on all watches (or all connected watches, if that makes
     // sense)
-    suspend fun sendNotification(
-            notification: TimelineNotification,
-            actionHandlers: Map<UByte, CustomTimelineActionHandler>? = null
-    )
+    suspend fun sendNotification(notification: TimelineNotification, actionHandlers: Map<UByte, CustomTimelineActionHandler>? = null)
     suspend fun markNotificationRead(itemId: Uuid)
     suspend fun sendPing(cookie: UInt)
     suspend fun launchApp(uuid: Uuid)
@@ -118,23 +101,23 @@ sealed class UserFacingError {
     data class FailedToSideloadApp(override val message: String) : UserFacingError()
     data class FailedToScan(override val message: String) : UserFacingError()
     data class MissingCompanionApp(
-            override val message: String,
-            val appName: String,
-            val appUuid: Uuid,
-            val downloadUrl: String?
+        override val message: String,
+        val appName: String,
+        val appUuid: Uuid,
+        val downloadUrl: String?
     ) : UserFacingError()
 }
 
 data class OtherPebbleApp(
-        val pkg: String,
-        val name: String,
+    val pkg: String,
+    val name: String,
 )
 
 interface HealthApi {
     val healthSettings: Flow<HealthSettings>
     val healthUpdateFlow: Flow<Unit>
     fun updateHealthSettings(healthSettings: HealthSettings)
-    suspend fun getHealthDebugStats(): io.rebble.libpebblecommon.services.HealthDebugStats
+    suspend fun getHealthDebugStats(): HealthDebugStats
     fun requestHealthData(fullSync: Boolean = false)
     fun sendHealthAveragesToWatch()
     fun forceHealthDataOverwrite()
@@ -147,13 +130,15 @@ interface Timeline {
 }
 
 interface Errors {
-    /** Errors which should be displayed to the user (e.g. using a snackbar). */
+    /**
+    * Errors which should be displayed to the user (e.g. using a snackbar).
+    */
     val userFacingErrors: Flow<UserFacingError>
 }
 
 data class AnalyticsEvent(
-        val name: String,
-        val parameters: Map<String, String>,
+    val name: String,
+    val parameters: Map<String, String>,
 )
 
 interface AnalyticsEvents {
@@ -179,15 +164,15 @@ interface TokenProvider {
 
 sealed class FirmwareUpdateCheckResult {
     data class FoundUpdate(
-            val version: FirmwareVersion,
-            val url: String,
-            val notes: String,
+        val version: FirmwareVersion,
+        val url: String,
+        val notes: String,
     ) : FirmwareUpdateCheckResult()
 
     data object FoundNoUpdate : FirmwareUpdateCheckResult()
 
     data class UpdateCheckFailed(
-            val error: String,
+        val error: String,
     ) : FirmwareUpdateCheckResult()
 }
 
@@ -214,25 +199,20 @@ interface RequestSync {
 }
 
 interface LockerApi {
-    /** @return true if the app was successfully synced and launched on all connected watches. */
+    /** 
+    * @return true if the app was successfully synced and launched on all connected watches.
+    */
     suspend fun sideloadApp(pbwPath: Path): Boolean
     fun getAllLockerBasicInfo(): Flow<List<AppBasicProperties>>
     fun getLocker(type: AppType, searchQuery: String?, limit: Int): Flow<List<LockerWrapper>>
     fun getLockerApp(id: Uuid): Flow<LockerWrapper?>
     suspend fun setAppOrder(id: Uuid, order: Int)
-    suspend fun waitUntilAppSyncedToWatch(
-            id: Uuid,
-            identifier: PebbleIdentifier,
-            timeout: Duration
-    ): Boolean
+    suspend fun waitUntilAppSyncedToWatch(id: Uuid, identifier: PebbleIdentifier, timeout: Duration): Boolean
     suspend fun removeApp(id: Uuid): Boolean
 }
 
 interface Contacts {
-    fun getContactsWithCounts(
-            searchTerm: String,
-            onlyNotified: Boolean
-    ): PagingSource<Int, ContactWithCount>
+    fun getContactsWithCounts(searchTerm: String, onlyNotified: Boolean): PagingSource<Int, ContactWithCount>
     fun getContact(id: String): Flow<ContactWithCount?>
     fun updateContactState(contactId: String, muteState: MuteState, vibePatternName: String?)
     suspend fun getContactImage(lookupKey: String): ImageBitmap?
@@ -242,25 +222,20 @@ interface Contacts {
 interface NotificationApps {
     fun notificationApps(): Flow<List<AppWithCount>>
     fun notificationAppChannelCounts(packageName: String): Flow<List<ChannelAndCount>>
-    fun mostRecentNotificationsFor(
-            pkg: String?,
-            channelId: String?,
-            contactId: String?,
-            limit: Int
-    ): Flow<List<NotificationEntity>>
+    fun mostRecentNotificationsFor(pkg: String?, channelId: String?, contactId: String?, limit: Int): Flow<List<NotificationEntity>>
 
     /** Update mute state of the specified app. Updates all apps if [packageName] is null. */
     fun updateNotificationAppMuteState(packageName: String?, muteState: MuteState)
     fun updateNotificationAppState(
-            packageName: String,
-            vibePatternName: String?,
-            colorName: String?,
-            iconCode: String?,
+        packageName: String,
+        vibePatternName: String?,
+        colorName: String?,
+        iconCode: String?,
     )
     fun updateNotificationChannelMuteState(
-            packageName: String,
-            channelId: String,
-            muteState: MuteState,
+        packageName: String,
+        channelId: String,
+        muteState: MuteState,
     )
 
     /** Will only return a value on Android */
@@ -274,9 +249,7 @@ interface Vibrations {
 }
 
 interface OtherPebbleApps {
-    /**
-     * Any other companion apps installed will likely break connecitivity (multiple PPoG services)
-     */
+    /** Any other companion apps installed will likely break connecitivity (multiple PPoG services) */
     fun otherPebbleCompanionAppsInstalled(): StateFlow<List<OtherPebbleApp>>
 }
 
@@ -291,50 +264,39 @@ interface PKJSToken {
 // Impl
 
 class LibPebble3(
-        private val watchManager: WatchManager,
-        private val scanning: Scanning,
-        private val locker: Locker,
-        private val timeChanged: TimeChanged,
-        private val webSyncManager: RequestSync,
-        private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
-        private val gattServerManager: GattServerManager,
-        private val bluetoothStateProvider: BluetoothStateProvider,
-        private val notificationListenerConnection: NotificationListenerConnection,
-        private val notificationApi: NotificationApi,
-        private val timelineNotificationsDao: TimelineNotificationRealDao,
-        private val actionOverrides: ActionOverrides,
-        private val phoneCalendarSyncer: PhoneCalendarSyncer,
-        private val missedCallSyncer: MissedCallSyncer,
-        private val libPebbleConfigFlow: LibPebbleConfigHolder,
-        private val health: Health,
-        private val otherPebbleApps: OtherPebbleApps,
-        private val jsTokenUtil: JsTokenUtil,
-        private val housekeeping: Housekeeping,
-        private val errorTracker: ErrorTracker,
-        private val phoneContactsSyncer: PhoneContactsSyncer,
-        private val contacts: Contacts,
-        private val analytics: AnalyticsEvents,
-        private val systemGeolocation: SystemGeolocation,
-        private val timeline: Timeline,
-        private val legacyPhoneReceiver: LegacyPhoneReceiver,
-        private val vibePatternDao: VibePatternDao,
-) :
-        LibPebble,
-        Scanning by scanning,
-        RequestSync by webSyncManager,
-        LockerApi by locker,
-        NotificationApps by notificationApi,
-        Calendar by phoneCalendarSyncer,
-        OtherPebbleApps by otherPebbleApps,
-        PKJSToken by jsTokenUtil,
-        Watches by watchManager,
-        Errors by errorTracker,
-        Contacts by contacts,
-        AnalyticsEvents by analytics,
-        HealthApi by health,
-        SystemGeolocation by systemGeolocation,
-        Timeline by timeline,
-        Vibrations by notificationApi {
+    private val watchManager: WatchManager,
+    private val scanning: Scanning,
+    private val locker: Locker,
+    private val timeChanged: TimeChanged,
+    private val webSyncManager: RequestSync,
+    private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
+    private val gattServerManager: GattServerManager,
+    private val bluetoothStateProvider: BluetoothStateProvider,
+    private val notificationListenerConnection: NotificationListenerConnection,
+    private val notificationApi: NotificationApi,
+    private val timelineNotificationsDao: TimelineNotificationRealDao,
+    private val actionOverrides: ActionOverrides,
+    private val phoneCalendarSyncer: PhoneCalendarSyncer,
+    private val missedCallSyncer: MissedCallSyncer,
+    private val libPebbleConfigFlow: LibPebbleConfigHolder,
+    private val health: Health,
+    private val otherPebbleApps: OtherPebbleApps,
+    private val jsTokenUtil: JsTokenUtil,
+    private val housekeeping: Housekeeping,
+    private val errorTracker: ErrorTracker,
+    private val phoneContactsSyncer: PhoneContactsSyncer,
+    private val contacts: Contacts,
+    private val analytics: AnalyticsEvents,
+    private val systemGeolocation: SystemGeolocation,
+    private val timeline: Timeline,
+    private val legacyPhoneReceiver: LegacyPhoneReceiver,
+    private val vibePatternDao: VibePatternDao,
+) : LibPebble, Scanning by scanning, RequestSync by webSyncManager, LockerApi by locker,
+    NotificationApps by notificationApi, Calendar by phoneCalendarSyncer, 
+    OtherPebbleApps by otherPebbleApps, PKJSToken by jsTokenUtil, Watches by watchManager,
+    Errors by errorTracker, Contacts by contacts, AnalyticsEvents by analytics,
+    HealthApi by health, SystemGeolocation by systemGeolocation, Timeline by timeline,
+    Vibrations by notificationApi {
     private val logger = Logger.withTag("LibPebble3")
     private val initialized = AtomicBoolean(false)
 
@@ -357,7 +319,9 @@ class LibPebble3(
         }
         housekeeping.init()
         legacyPhoneReceiver.init(currentCall)
-        libPebbleCoroutineScope.launch { vibePatternDao.ensureAllDefaultsInserted() }
+        libPebbleCoroutineScope.launch {
+            vibePatternDao.ensureAllDefaultsInserted()
+        }
         locker.init()
 
         performPlatformSpecificInit()
@@ -372,14 +336,9 @@ class LibPebble3(
 
     override val currentCall: MutableStateFlow<Call?> = MutableStateFlow(null)
 
-    override suspend fun sendNotification(
-            notification: TimelineNotification,
-            actionHandlers: Map<UByte, CustomTimelineActionHandler>?
-    ) {
+    override suspend fun sendNotification(notification: TimelineNotification, actionHandlers: Map<UByte, CustomTimelineActionHandler>? ) {
         timelineNotificationsDao.insertOrReplace(notification)
-        actionHandlers?.let {
-            actionOverrides.setActionHandlers(notification.itemId, actionHandlers)
-        }
+        actionHandlers?.let { actionOverrides.setActionHandlers(notification.itemId, actionHandlers) }
     }
 
     override suspend fun markNotificationRead(itemId: Uuid) {
@@ -410,38 +369,34 @@ class LibPebble3(
     }
 
     private suspend fun forEachConnectedWatch(block: suspend ConnectedPebbleDevice.() -> Unit) {
-        watches.value.filterIsInstance<ConnectedPebbleDevice>().forEach { it.block() }
+        watches.value.filterIsInstance<ConnectedPebbleDevice>().forEach {
+            it.block()
+        }
     }
 
     private fun forEachConnectedWatchInAnyState(block: CommonConnectedDevice.() -> Unit) {
-        watches.value.filterIsInstance<CommonConnectedDevice>().forEach { it.block() }
+        watches.value.filterIsInstance<CommonConnectedDevice>().forEach {
+            it.block()
+        }
     }
 
     companion object {
         private lateinit var koin: Koin
 
         fun create(
-                /**
-                 * Default config, before any changes are made.
-                 *
-                 * Config will be persisted - this parameter will only be used on the first init.
-                 */
-                defaultConfig: LibPebbleConfig,
-                webServices: WebServices,
-                appContext: AppContext,
-                tokenProvider: TokenProvider,
-                proxyTokenProvider: StateFlow<String?>,
-                transcriptionProvider: TranscriptionProvider
+            /**
+             * Default config, before any changes are made.
+             *
+             * Config will be persisted - this parameter will only be used on the first init.
+             */
+            defaultConfig: LibPebbleConfig,
+            webServices: WebServices,
+            appContext: AppContext,
+            tokenProvider: TokenProvider,
+            proxyTokenProvider: StateFlow<String?>,
+            transcriptionProvider: TranscriptionProvider
         ): LibPebble {
-            koin =
-                    initKoin(
-                            defaultConfig,
-                            webServices,
-                            appContext,
-                            tokenProvider,
-                            proxyTokenProvider,
-                            transcriptionProvider
-                    )
+            koin = initKoin(defaultConfig, webServices, appContext, tokenProvider, proxyTokenProvider, transcriptionProvider)
             val libPebble = koin.get<LibPebble>()
             return libPebble
         }

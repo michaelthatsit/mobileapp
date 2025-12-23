@@ -401,10 +401,10 @@ fun initKoin(
                 singleOf(::MissedCallSyncer)
                 singleOf(::FirmwareDownloader)
                 singleOf(::JsTokenUtil)
-                single { Datalogging(get(), get(), get(), get()) }
+                singleOf(::Datalogging)
                 singleOf(::HealthServiceRegistry)
-                single { RealHealthServiceAccessor(get()) } bind io.rebble.libpebblecommon.health.HealthServiceAccessor::class
-                single { Health(get(), get(), get(), get()) }
+                singleOf(::RealHealthServiceAccessor) bind io.rebble.libpebblecommon.health.HealthServiceAccessor::class
+                singleOf (::Health)
                 singleOf(::ErrorTracker)
                 singleOf(::RealConnectionFailureHandler) bind ConnectionFailureHandler::class
                 singleOf(::PhoneContactsSyncer)
