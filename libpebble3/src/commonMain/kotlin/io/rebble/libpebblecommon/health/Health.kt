@@ -1,5 +1,6 @@
 package io.rebble.libpebblecommon.health
 
+import co.touchlab.kermit.Logger
 import io.rebble.libpebblecommon.connection.HealthApi
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.entity.HealthGender
@@ -7,9 +8,14 @@ import io.rebble.libpebblecommon.database.entity.WatchSettingsDao
 import io.rebble.libpebblecommon.database.entity.getWatchSettings
 import io.rebble.libpebblecommon.database.entity.setWatchSettings
 import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
+import io.rebble.libpebblecommon.services.HealthService
 import io.rebble.libpebblecommon.services.calculateHealthAverages
 import io.rebble.libpebblecommon.services.fetchAndGroupDailySleep
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DatePeriod
@@ -18,6 +24,7 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock.System
 
 /** Interface for accessing connection-scoped HealthService functionality */
 interface HealthServiceAccessor {
@@ -37,12 +44,12 @@ interface HealthServiceAccessor {
 class RealHealthServiceAccessor(
         private val registry: HealthServiceRegistry,
 ) : HealthServiceAccessor {
-    private val logger = co.touchlab.kermit.Logger.withTag("RealHealthServiceAccessor")
+    private val logger = Logger.withTag("RealHealthServiceAccessor")
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @OptIn(ExperimentalCoroutinesApi::class)
     override val healthUpdateFlow: Flow<Unit> =
             registry.activeServiceFlow.flatMapLatest {
-                it?.healthUpdateFlow ?: kotlinx.coroutines.flow.emptyFlow()
+                it?.healthUpdateFlow ?: emptyFlow()
             }
 
     override fun requestHealthData(fullSync: Boolean) {
@@ -108,18 +115,16 @@ class RealHealthServiceAccessor(
 
 /** Registry to track active HealthService instances across connection scopes */
 class HealthServiceRegistry {
-    private val services = mutableListOf<io.rebble.libpebblecommon.services.HealthService>()
-    private var activeService: io.rebble.libpebblecommon.services.HealthService? = null
+    private val services = mutableListOf<HealthService>()
+    private var activeService: HealthService? = null
     private val lock = Any()
 
-    private val _activeServiceFlow =
-            kotlinx.coroutines.flow.MutableStateFlow<
-                    io.rebble.libpebblecommon.services.HealthService?>(null)
+    private val _activeServiceFlow = MutableStateFlow<HealthService?>(null)
     val activeServiceFlow:
-            kotlinx.coroutines.flow.StateFlow<io.rebble.libpebblecommon.services.HealthService?> =
+            StateFlow<HealthService?> =
             _activeServiceFlow
 
-    fun register(service: io.rebble.libpebblecommon.services.HealthService) {
+    fun register(service: HealthService) {
         synchronized(lock) {
             services.remove(service)
             services.add(service)
@@ -128,7 +133,7 @@ class HealthServiceRegistry {
         }
     }
 
-    fun unregister(service: io.rebble.libpebblecommon.services.HealthService) {
+    fun unregister(service: HealthService) {
         synchronized(lock) {
             services.remove(service)
             if (activeService == service) {
@@ -138,14 +143,14 @@ class HealthServiceRegistry {
         }
     }
 
-    fun getAllHealthServices(): List<io.rebble.libpebblecommon.services.HealthService> {
+    fun getAllHealthServices(): List<HealthService> {
         return synchronized(lock) { services.toList() }
     }
 
-    fun getActiveHealthService(): io.rebble.libpebblecommon.services.HealthService? =
+    fun getActiveHealthService(): HealthService? =
             synchronized(lock) { activeService }
 
-    fun isActive(service: io.rebble.libpebblecommon.services.HealthService): Boolean =
+    fun isActive(service: HealthService): Boolean =
             synchronized(lock) { activeService == service }
 }
 
@@ -155,7 +160,7 @@ class Health(
         private val healthDao: HealthDao,
         private val healthServiceAccessor: HealthServiceAccessor,
 ) : HealthApi {
-    private val logger = co.touchlab.kermit.Logger.withTag("Health")
+    private val logger = Logger.withTag("Health")
 
     override val healthSettings: Flow<HealthSettings> = watchSettingsDao.getWatchSettings()
     override val healthUpdateFlow: Flow<Unit> = healthServiceAccessor.healthUpdateFlow
@@ -173,7 +178,7 @@ class Health(
     override suspend fun getHealthDebugStats(): HealthDebugStats {
         // This function operates on the shared database, so it doesn't need a connection
         val timeZone = TimeZone.currentSystemDefault()
-        val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+        val today = System.now().toLocalDateTime(timeZone).date
         val startDate = today.minus(DatePeriod(days = 30))
 
         val todayStart = today.atStartOfDayIn(timeZone).epochSeconds

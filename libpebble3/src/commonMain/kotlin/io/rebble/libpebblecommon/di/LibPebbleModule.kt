@@ -101,6 +101,7 @@ import io.rebble.libpebblecommon.datalogging.Datalogging
 import io.rebble.libpebblecommon.health.Health
 import io.rebble.libpebblecommon.health.HealthServiceRegistry
 import io.rebble.libpebblecommon.health.RealHealthServiceAccessor
+import io.rebble.libpebblecommon.health.HealthServiceAccessor
 import io.rebble.libpebblecommon.js.JsTokenUtil
 import io.rebble.libpebblecommon.js.RemoteTimelineEmulator
 import io.rebble.libpebblecommon.locker.Locker
@@ -398,7 +399,7 @@ fun initKoin(
                 singleOf(::JsTokenUtil)
                 singleOf(::Datalogging)
                 singleOf(::HealthServiceRegistry)
-                singleOf(::RealHealthServiceAccessor) bind io.rebble.libpebblecommon.health.HealthServiceAccessor::class
+                singleOf(::RealHealthServiceAccessor) bind HealthServiceAccessor::class
                 singleOf (::Health)
                 singleOf(::ErrorTracker)
                 singleOf(::RealConnectionFailureHandler) bind ConnectionFailureHandler::class

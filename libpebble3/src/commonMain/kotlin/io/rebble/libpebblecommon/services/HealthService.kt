@@ -9,6 +9,8 @@ import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
 import io.rebble.libpebblecommon.database.dao.removeDuplicateOverlayEntries
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.health.HealthDebugStats
+import io.rebble.libpebblecommon.health.HealthServiceRegistry
+import io.rebble.libpebblecommon.health.OverlayType
 import io.rebble.libpebblecommon.health.isSleepType
 import io.rebble.libpebblecommon.health.parsers.parseOverlayData
 import io.rebble.libpebblecommon.health.parsers.parseStepsData
@@ -17,9 +19,13 @@ import io.rebble.libpebblecommon.packets.HealthSyncIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
 import io.rebble.libpebblecommon.services.app.AppRunStateService
 import io.rebble.libpebblecommon.services.blobdb.BlobDBService
+import kotlin.time.Clock.System
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -28,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
@@ -61,7 +68,7 @@ class HealthService(
         private val healthDao: HealthDao,
         private val appRunStateService: AppRunStateService,
         private val blobDBService: BlobDBService,
-        private val healthServiceRegistry: io.rebble.libpebblecommon.health.HealthServiceRegistry,
+        private val healthServiceRegistry: HealthServiceRegistry,
 ) : ProtocolService {
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
@@ -97,8 +104,8 @@ class HealthService(
         private const val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
     }
 
-    private val _healthUpdateFlow = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(replay = 0)
-    val healthUpdateFlow: kotlinx.coroutines.flow.SharedFlow<Unit> = _healthUpdateFlow
+    private val _healthUpdateFlow = MutableSharedFlow<Unit>(replay = 0)
+    val healthUpdateFlow: SharedFlow<Unit> = _healthUpdateFlow
 
     fun init() {
         // Register this service instance so it can be accessed for manual sync requests
@@ -116,7 +123,7 @@ class HealthService(
         // Unregister when the connection scope is cancelled
         scope.launch {
             try {
-                kotlinx.coroutines.awaitCancellation()
+                awaitCancellation()
             } finally {
                 healthServiceRegistry.unregister(this@HealthService)
             }
@@ -139,7 +146,7 @@ class HealthService(
         scope.launch {
             logger.i { "HEALTH_STATS: Manual health averages send requested" }
             updateHealthStats()
-            lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
         }
     }
 
@@ -158,10 +165,10 @@ class HealthService(
             healthDao.removeDuplicateOverlayEntries()
 
             val timeZone = TimeZone.currentSystemDefault()
-            val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+            val today = System.now().toLocalDateTime(timeZone).date
             lastTodayUpdateDate.value = null
             updateHealthStats()
-            lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
             lastTodayUpdateDate.value = today
         }
     }
@@ -189,7 +196,7 @@ class HealthService(
                 delay(RECONCILE_DELAY_MS)
                 // Update stats with the new data
                 updateHealthStats()
-                lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+                lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
             } else {
                 logger.i { "HEALTH_SERVICE: Force sync completed - no new data from watch" }
             }
@@ -210,7 +217,7 @@ class HealthService(
         if (!isActiveConnection("reconcile")) return
         val baselineTimestamp = healthDao.getLatestTimestamp() ?: 0L
         val isFirstSync = baselineTimestamp == 0L
-        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        val now = System.now().toEpochMilliseconds()
         val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60 * 60_000L)
 
         logger.i {
@@ -252,7 +259,7 @@ class HealthService(
             lastFullStatsUpdate.value = now
             // Mark that we've updated today so we don't do it again immediately
             val timeZone = TimeZone.currentSystemDefault()
-            val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
+            val today = System.now().toLocalDateTime(timeZone).date
             lastTodayUpdateDate.value = today
         } else {
             logger.i {
@@ -266,11 +273,11 @@ class HealthService(
                 if (fullSync) {
                     logger.i { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
                     HealthSyncOutgoingPacket.RequestFirstSync(
-                            kotlin.time.Clock.System.now().epochSeconds.toUInt()
+                            System.now().epochSeconds.toUInt()
                     )
                 } else {
                     val lastSync = healthDao.getLatestTimestamp() ?: 0L
-                    val currentTime = kotlin.time.Clock.System.now().epochSeconds
+                    val currentTime = System.now().epochSeconds
                     val timeSinceLastSync =
                             if (lastSync > 0) {
                                 (currentTime - (lastSync / 1000)).coerceAtLeast(60)
@@ -342,11 +349,11 @@ class HealthService(
             // Update health stats once daily, preferably in the morning
             while (true) {
                 val timeZone = TimeZone.currentSystemDefault()
-                val now = kotlin.time.Clock.System.now().toLocalDateTime(timeZone)
+                val now = System.now().toLocalDateTime(timeZone)
                 val lastUpdateTime = lastFullStatsUpdate.value
                 val hoursSinceLastUpdate =
                         if (lastUpdateTime > 0) {
-                            (kotlin.time.Clock.System.now().toEpochMilliseconds() -
+                            (System.now().toEpochMilliseconds() -
                                     lastUpdateTime) / (60 * 60_000L)
                         } else {
                             24L
@@ -355,7 +362,7 @@ class HealthService(
                 // Calculate next morning update time (7 AM)
                 val tomorrow = now.date.plus(DatePeriod(days = 1))
                 val nextMorning =
-                        kotlinx.datetime.LocalDateTime(
+                        LocalDateTime(
                                 tomorrow.year,
                                 tomorrow.month,
                                 tomorrow.dayOfMonth,
@@ -366,7 +373,7 @@ class HealthService(
                 val morningInstant = nextMorning.toInstant(timeZone)
                 val delayUntilMorning =
                         (morningInstant.toEpochMilliseconds() -
-                                        kotlin.time.Clock.System.now().toEpochMilliseconds())
+                                        System.now().toEpochMilliseconds())
                                 .coerceAtLeast(0L)
 
                 // Wait until morning or 24 hours, whichever comes first
@@ -380,7 +387,7 @@ class HealthService(
                         "HEALTH_STATS: Running scheduled daily stats update (${hoursSinceLastUpdate}h since last)"
                     }
                     updateHealthStats()
-                    lastFullStatsUpdate.value = kotlin.time.Clock.System.now().toEpochMilliseconds()
+                    lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
                 }
             }
         }
@@ -406,7 +413,7 @@ class HealthService(
         val session = healthSessions[sessionId] ?: return
 
         // Throttle data reception if app is in background
-        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        val now = System.now().toEpochMilliseconds()
         val timeSinceLastReception = now - lastDataReceptionTime.value
         val appInForeground = isAppOpen.value
 
@@ -443,8 +450,8 @@ class HealthService(
             // Update today's movement and recent sleep data when we finish receiving a batch
             if (itemsLeft.toInt() == 0) {
                 val timeZone = TimeZone.currentSystemDefault()
-                val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
-                val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+                val today = System.now().toLocalDateTime(timeZone).date
+                val now = System.now().toEpochMilliseconds()
                 val timeSinceLastUpdate = now - lastTodayUpdateTime.value
 
                 val shouldUpdate = lastTodayUpdateDate.value != today
@@ -559,7 +566,7 @@ class HealthService(
         val sleepRecords =
                 allRecords.filter { type ->
                     val overlayType =
-                            io.rebble.libpebblecommon.health.OverlayType.fromValue(type.type)
+                            OverlayType.fromValue(type.type)
                     overlayType != null && isSleepType(overlayType)
                 }
         val totalSleepMinutes = sleepRecords.sumOf { (it.duration / 60).toInt() }
@@ -568,9 +575,9 @@ class HealthService(
         val activityRecords =
                 allRecords.filter { type ->
                     val overlayType =
-                            io.rebble.libpebblecommon.health.OverlayType.fromValue(type.type)
-                    overlayType == io.rebble.libpebblecommon.health.OverlayType.Walk ||
-                            overlayType == io.rebble.libpebblecommon.health.OverlayType.Run
+                            OverlayType.fromValue(type.type)
+                    overlayType == OverlayType.Walk ||
+                            overlayType == OverlayType.Run
                 }
         val activitySteps = activityRecords.sumOf { it.steps }
         val activityDistanceKm = activityRecords.sumOf { it.distanceCm } / 100000.0
@@ -587,7 +594,7 @@ class HealthService(
         return summary
     }
 
-    private fun isSleepType(type: io.rebble.libpebblecommon.health.OverlayType): Boolean =
+    private fun isSleepType(type: OverlayType): Boolean =
             type.isSleepType()
 
     private suspend fun updateHealthStats() {
