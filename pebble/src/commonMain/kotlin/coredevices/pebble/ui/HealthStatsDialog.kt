@@ -21,10 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +47,21 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
                 isRefreshing = true
                 // Pull latest data from watch
                 libPebble.requestHealthData(fullSync = false)
-                kotlinx.coroutines.delay(3000) // Wait for sync
+
+                // Wait for sync update with timeout
+                try {
+                    kotlinx.coroutines.withTimeout(10_000) {
+                        libPebble.healthUpdateFlow.collect {
+                            // First emission means we got an update
+                            throw kotlinx.coroutines.CancellationException("Got update")
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Expected - flow collection cancelled by us
+                } catch (e: Exception) {
+                    Logger.w("HealthStatsDialog") { "Timeout waiting for health sync" }
+                }
+
                 // Update stats
                 stats = libPebble.getHealthDebugStats()
                 // Send updated averages back to watch
@@ -69,45 +83,37 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
     }
 
     M3Dialog(
-        onDismissRequest = onDismissRequest,
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Health Debug Stats")
-                if (isRefreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(20.dp).width(20.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    IconButton(onClick = { syncAndRefresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh health data")
+            onDismissRequest = onDismissRequest,
+            title = {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Health Debug Stats")
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                                modifier = Modifier.height(20.dp).width(20.dp),
+                                strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { syncAndRefresh() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh health data")
+                        }
                     }
                 }
-            }
-        },
-        buttons = {
-            TextButton(onClick = onDismissRequest) {
-                Text("Close")
-            }
-        },
+            },
+            buttons = { TextButton(onClick = onDismissRequest) { Text("Close") } },
     ) {
         Box(Modifier.heightIn(max = 400.dp)) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            ) {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 if (stats != null) {
                     val s = stats!!
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         // Today's Steps
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Today's Steps", style = MaterialTheme.typography.bodyMedium)
                             Text("${s.todaySteps}", style = MaterialTheme.typography.bodyMedium)
@@ -115,18 +121,18 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
 
                         // 30d Avg Steps
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                "Average",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "Average",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                "${s.averageStepsPerDay}/day",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "${s.averageStepsPerDay}/day",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
 
@@ -134,44 +140,46 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
 
                         // Last Night's Sleep
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Last Night's Sleep", style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                s.lastNightSleepHours?.let { String.format("%.1fh", it) } ?: "--",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (s.lastNightSleepHours != null) {
-                                    MaterialTheme.colorScheme.onSurface
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
+                                    s.lastNightSleepHours?.let { String.format("%.1fh", it) }
+                                            ?: "--",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color =
+                                            if (s.lastNightSleepHours != null) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
                             )
                         }
 
                         // 30d Avg Sleep
                         val avgSleepHrs = s.averageSleepSecondsPerDay / 3600.0
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                "Average",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "Average",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                "${String.format("%.1f", avgSleepHrs)}h/night",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "${String.format("%.1f", avgSleepHrs)}h/night",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 } else {
                     Text(
-                        "Loading health statistics...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "Loading health statistics...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

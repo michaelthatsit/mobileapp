@@ -11,18 +11,18 @@ import io.rebble.libpebblecommon.services.HealthDebugStats
 import io.rebble.libpebblecommon.services.calculateHealthAverages
 import io.rebble.libpebblecommon.services.fetchAndGroupDailySleep
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
-import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
-/**
- * Interface for accessing connection-scoped HealthService functionality
- */
+/** Interface for accessing connection-scoped HealthService functionality */
 interface HealthServiceAccessor {
+    val healthUpdateFlow: Flow<Unit>
     fun requestHealthData(fullSync: Boolean)
     fun sendHealthAveragesToWatch()
     fun forceHealthDataOverwrite()
@@ -32,13 +32,19 @@ interface HealthServiceAccessor {
 /**
  * Implementation that finds connected pebbles and calls their HealthService
  *
- * This uses a registry pattern where HealthService instances register themselves
- * when they're created for a connection.
+ * This uses a registry pattern where HealthService instances register themselves when they're
+ * created for a connection.
  */
 class RealHealthServiceAccessor(
-    private val registry: HealthServiceRegistry,
-): HealthServiceAccessor {
+        private val registry: HealthServiceRegistry,
+) : HealthServiceAccessor {
     private val logger = co.touchlab.kermit.Logger.withTag("RealHealthServiceAccessor")
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override val healthUpdateFlow: Flow<Unit> =
+            registry.activeServiceFlow.flatMapLatest {
+                it?.healthUpdateFlow ?: kotlinx.coroutines.flow.emptyFlow()
+            }
 
     override fun requestHealthData(fullSync: Boolean) {
         val service = registry.getActiveHealthService()
@@ -101,19 +107,25 @@ class RealHealthServiceAccessor(
     }
 }
 
-/**
- * Registry to track active HealthService instances across connection scopes
- */
+/** Registry to track active HealthService instances across connection scopes */
 class HealthServiceRegistry {
     private val services = mutableListOf<io.rebble.libpebblecommon.services.HealthService>()
     private var activeService: io.rebble.libpebblecommon.services.HealthService? = null
     private val lock = Any()
+
+    private val _activeServiceFlow =
+            kotlinx.coroutines.flow.MutableStateFlow<
+                    io.rebble.libpebblecommon.services.HealthService?>(null)
+    val activeServiceFlow:
+            kotlinx.coroutines.flow.StateFlow<io.rebble.libpebblecommon.services.HealthService?> =
+            _activeServiceFlow
 
     fun register(service: io.rebble.libpebblecommon.services.HealthService) {
         synchronized(lock) {
             services.remove(service)
             services.add(service)
             activeService = service
+            _activeServiceFlow.value = service
         }
     }
 
@@ -122,35 +134,37 @@ class HealthServiceRegistry {
             services.remove(service)
             if (activeService == service) {
                 activeService = services.lastOrNull()
+                _activeServiceFlow.value = activeService
             }
         }
     }
 
     fun getAllHealthServices(): List<io.rebble.libpebblecommon.services.HealthService> {
-        return synchronized(lock) {
-            services.toList()
-        }
+        return synchronized(lock) { services.toList() }
     }
 
     fun getActiveHealthService(): io.rebble.libpebblecommon.services.HealthService? =
-        synchronized(lock) { activeService }
+            synchronized(lock) { activeService }
 
     fun isActive(service: io.rebble.libpebblecommon.services.HealthService): Boolean =
-        synchronized(lock) { activeService == service }
+            synchronized(lock) { activeService == service }
 }
 
 class Health(
-    private val watchSettingsDao: WatchSettingsDao,
-    private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
-    private val healthDao: HealthDao,
-    private val healthServiceAccessor: HealthServiceAccessor,
-): HealthApi {
+        private val watchSettingsDao: WatchSettingsDao,
+        private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
+        private val healthDao: HealthDao,
+        private val healthServiceAccessor: HealthServiceAccessor,
+) : HealthApi {
     private val logger = co.touchlab.kermit.Logger.withTag("Health")
 
     override val healthSettings: Flow<HealthSettings> = watchSettingsDao.getWatchSettings()
+    override val healthUpdateFlow: Flow<Unit> = healthServiceAccessor.healthUpdateFlow
 
     override fun updateHealthSettings(healthSettings: HealthSettings) {
-        logger.i { "updateHealthSettings called: heightMm=${healthSettings.heightMm}, weightDag=${healthSettings.weightDag}, ageYears=${healthSettings.ageYears}, gender=${healthSettings.gender}, imperialUnits=${healthSettings.imperialUnits}" }
+        logger.i {
+            "updateHealthSettings called: heightMm=${healthSettings.heightMm}, weightDag=${healthSettings.weightDag}, ageYears=${healthSettings.ageYears}, gender=${healthSettings.gender}, imperialUnits=${healthSettings.imperialUnits}"
+        }
         libPebbleCoroutineScope.launch {
             watchSettingsDao.setWatchSettings(healthSettings)
             logger.i { "Health settings saved to database - will sync to watch via BlobDB" }
@@ -172,98 +186,83 @@ class Health(
 
         val daysOfData = maxOf(averages.stepDaysWithData, averages.sleepDaysWithData)
 
-        val lastNightSleepSeconds = fetchAndGroupDailySleep(healthDao, todayStart, timeZone)
-            ?.totalSleep ?: 0L
-        val lastNightSleepHours = if (lastNightSleepSeconds > 0) lastNightSleepSeconds / 3600f else null
+        val lastNightSleepSeconds =
+                fetchAndGroupDailySleep(healthDao, todayStart, timeZone)?.totalSleep ?: 0L
+        val lastNightSleepHours =
+                if (lastNightSleepSeconds > 0) lastNightSleepSeconds / 3600f else null
 
         return HealthDebugStats(
-            totalSteps30Days = averages.totalSteps,
-            averageStepsPerDay = averages.averageStepsPerDay,
-            totalSleepSeconds30Days = averages.totalSleepSeconds,
-            averageSleepSecondsPerDay = averages.averageSleepSecondsPerDay,
-            todaySteps = todaySteps,
-            lastNightSleepHours = lastNightSleepHours,
-            latestDataTimestamp = latestTimestamp,
-            daysOfData = daysOfData
+                totalSteps30Days = averages.totalSteps,
+                averageStepsPerDay = averages.averageStepsPerDay,
+                totalSleepSeconds30Days = averages.totalSleepSeconds,
+                averageSleepSecondsPerDay = averages.averageSleepSecondsPerDay,
+                todaySteps = todaySteps,
+                lastNightSleepHours = lastNightSleepHours,
+                latestDataTimestamp = latestTimestamp,
+                daysOfData = daysOfData
         )
     }
 
     override fun requestHealthData(fullSync: Boolean) {
-        libPebbleCoroutineScope.launch {
-            healthServiceAccessor.requestHealthData(fullSync)
-        }
+        libPebbleCoroutineScope.launch { healthServiceAccessor.requestHealthData(fullSync) }
     }
 
     override fun sendHealthAveragesToWatch() {
-        libPebbleCoroutineScope.launch {
-            healthServiceAccessor.sendHealthAveragesToWatch()
-        }
+        libPebbleCoroutineScope.launch { healthServiceAccessor.sendHealthAveragesToWatch() }
     }
 
     override fun forceHealthDataOverwrite() {
-        libPebbleCoroutineScope.launch {
-            healthServiceAccessor.forceHealthDataOverwrite()
-        }
+        libPebbleCoroutineScope.launch { healthServiceAccessor.forceHealthDataOverwrite() }
     }
 
     override fun forceSyncLast24Hours() {
-        libPebbleCoroutineScope.launch {
-            healthServiceAccessor.forceSyncLast24Hours()
-        }
+        libPebbleCoroutineScope.launch { healthServiceAccessor.forceSyncLast24Hours() }
     }
 }
 
 data class HealthSettings(
-    val heightMm: Short = 1700,  // 170cm in mm (default height)
-    val weightDag: Short = 7000,  // 70kg in decagrams (default weight)
-    val trackingEnabled: Boolean = false,
-    val activityInsightsEnabled: Boolean = false,
-    val sleepInsightsEnabled: Boolean = false,
-    val ageYears: Int = 35,
-    val gender: HealthGender = HealthGender.Female,
-    val imperialUnits: Boolean = false,  // false = metric (km/kg), true = imperial (mi/lb)
+        val heightMm: Short = 1700, // 170cm in mm (default height)
+        val weightDag: Short = 7000, // 70kg in decagrams (default weight)
+        val trackingEnabled: Boolean = false,
+        val activityInsightsEnabled: Boolean = false,
+        val sleepInsightsEnabled: Boolean = false,
+        val ageYears: Int = 35,
+        val gender: HealthGender = HealthGender.Female,
+        val imperialUnits: Boolean = false, // false = metric (km/kg), true = imperial (mi/lb)
 )
 
-/**
- * Time range for displaying health data
- */
+/** Time range for displaying health data */
 enum class HealthTimeRange {
-    Daily, Weekly, Monthly
+    Daily,
+    Weekly,
+    Monthly
 }
 
-/**
- * Data structure for stacked sleep charts (weekly/monthly views).
- */
+/** Data structure for stacked sleep charts (weekly/monthly views). */
 data class StackedSleepData(
-    val label: String,
-    val lightSleepHours: Float,
-    val deepSleepHours: Float
+        val label: String,
+        val lightSleepHours: Float,
+        val deepSleepHours: Float
 )
 
-/**
- * Data structure for weekly aggregated data (for monthly charts broken into weeks).
- */
+/** Data structure for weekly aggregated data (for monthly charts broken into weeks). */
 data class WeeklyAggregatedData(
-    val label: String,  // e.g., "Mar 27 - Apr 4"
-    val value: Float?,  // null when there's no data for this week
-    val weekIndex: Int  // Position in the overall sequence
+        val label: String, // e.g., "Mar 27 - Apr 4"
+        val value: Float?, // null when there's no data for this week
+        val weekIndex: Int // Position in the overall sequence
 )
 
-/**
- * Represents a segment of sleep in the daily view.
- */
+/** Represents a segment of sleep in the daily view. */
 data class SleepSegment(
-    val startHour: Float,      // Hour of day (0-24)
-    val durationHours: Float,
-    val type: OverlayType      // Sleep or DeepSleep
+        val startHour: Float, // Hour of day (0-24)
+        val durationHours: Float,
+        val type: OverlayType // Sleep or DeepSleep
 )
 
-/**
- * Daily sleep data with all segments and timing information.
- */
+/** Daily sleep data with all segments and timing information. */
 data class DailySleepData(
-    val segments: List<SleepSegment>,
-    val bedtime: Float,        // Start hour
-    val wakeTime: Float,       // End hour
-    val totalSleepHours: Float
+        val segments: List<SleepSegment>,
+        val bedtime: Float, // Start hour
+        val wakeTime: Float, // End hour
+        val totalSleepHours: Float
 )
