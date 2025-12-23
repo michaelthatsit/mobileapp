@@ -47,7 +47,6 @@ import io.rebble.libpebblecommon.connection.NotificationApps
 import io.rebble.libpebblecommon.connection.TokenProvider
 import io.rebble.libpebblecommon.connection.WebServices
 import io.rebble.libpebblecommon.database.dao.HealthDao
-import io.rebble.libpebblecommon.di.getLibPebbleKoin
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import io.rebble.libpebblecommon.voice.TranscriptionProvider
 import kotlinx.coroutines.GlobalScope
