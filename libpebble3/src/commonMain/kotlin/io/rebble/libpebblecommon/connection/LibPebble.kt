@@ -73,7 +73,7 @@ sealed class PebbleConnectionEvent {
 
 @Stable
 interface LibPebble : Scanning, RequestSync, LockerApi, NotificationApps, CallManagement, Calendar,
-    OtherPebbleApps, PKJSToken, Watches, Errors, Contacts, AnalyticsEvents, HealthApi, 
+    OtherPebbleApps, PKJSToken, Watches, Errors, Contacts, AnalyticsEvents, HealthApi,
     SystemGeolocation, Timeline, Vibrations {
     fun init()
 
