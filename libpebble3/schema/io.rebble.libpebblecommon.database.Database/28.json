@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 28,
-    "identityHash": "3a5c9f2b6c0259faae77000d680d0e45",
+    "identityHash": "303ef830c1cfac0ca686c08147d3b890",
     "entities": [
       {
         "tableName": "KnownWatchItem",
@@ -1243,14 +1243,8 @@
       },
       {
         "tableName": "overlay_data",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startTime` INTEGER NOT NULL, `duration` INTEGER NOT NULL, `type` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `restingKiloCalories` INTEGER NOT NULL, `activeKiloCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `offsetUTC` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`startTime` INTEGER NOT NULL, `duration` INTEGER NOT NULL, `type` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `restingKiloCalories` INTEGER NOT NULL, `activeKiloCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `offsetUTC` INTEGER NOT NULL, PRIMARY KEY(`startTime`, `type`))",
         "fields": [
-          {
-            "fieldPath": "id",
-            "columnName": "id",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
           {
             "fieldPath": "startTime",
             "columnName": "startTime",
@@ -1301,16 +1295,17 @@
           }
         ],
         "primaryKey": {
-          "autoGenerate": true,
+          "autoGenerate": false,
           "columnNames": [
-            "id"
+            "startTime",
+            "type"
           ]
         }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3a5c9f2b6c0259faae77000d680d0e45')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '303ef830c1cfac0ca686c08147d3b890')"
     ]
   }
 }

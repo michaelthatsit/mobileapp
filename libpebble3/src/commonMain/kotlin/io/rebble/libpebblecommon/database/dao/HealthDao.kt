@@ -84,9 +84,6 @@ interface HealthDao {
         @Query("SELECT * FROM overlay_data ORDER BY startTime ASC")
         suspend fun getAllOverlayEntries(): List<OverlayDataEntity>
 
-        @Query("DELETE FROM overlay_data WHERE id IN (:ids)")
-        suspend fun deleteOverlayEntriesByIds(ids: List<Long>)
-
         @Query(
                 """
         SELECT SUM(duration) / 60 FROM overlay_data

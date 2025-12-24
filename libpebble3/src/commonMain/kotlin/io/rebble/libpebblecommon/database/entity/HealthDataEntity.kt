@@ -20,10 +20,11 @@ data class HealthDataEntity(
     val heartRateWeight: Int = 0
 )
 
-@Entity(tableName = "overlay_data")
+@Entity(
+    tableName = "overlay_data",
+    primaryKeys = ["startTime", "type"]
+)
 data class OverlayDataEntity(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
     val startTime: Long,
     val duration: Long,
     val type: Int,

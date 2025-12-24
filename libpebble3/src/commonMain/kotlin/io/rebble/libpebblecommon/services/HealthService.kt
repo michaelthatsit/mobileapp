@@ -6,7 +6,6 @@ import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
 import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
-import io.rebble.libpebblecommon.database.dao.removeDuplicateOverlayEntries
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.health.HealthDebugStats
 import io.rebble.libpebblecommon.health.HealthServiceRegistry
@@ -160,9 +159,6 @@ class HealthService(
             logger.i {
                 "HEALTH_STATS: Force overwrite requested - pushing all health data to watch"
             }
-
-            // First, clean up any duplicate overlay entries in the database
-            healthDao.removeDuplicateOverlayEntries()
 
             val timeZone = TimeZone.currentSystemDefault()
             val today = System.now().toLocalDateTime(timeZone).date
