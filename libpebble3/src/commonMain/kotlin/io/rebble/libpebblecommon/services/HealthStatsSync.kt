@@ -120,11 +120,11 @@ internal suspend fun updateHealthStatsInDatabase(
 
 /** Creates a sleep data payload for BlobDB */
 private fun sleepPayload(
-        dayStartEpochSec: Long,
-        sleepDuration: Int,
-        deepSleepDuration: Int,
-        fallAsleepTime: Int,
-        wakeupTime: Int
+    dayStartEpochSec: Long,
+    sleepDuration: Int,
+    deepSleepDuration: Int,
+    fallAsleepTime: Int,
+    wakeupTime: Int
 ): UByteArray {
     val buffer = DataBuffer(SLEEP_PAYLOAD_SIZE).apply { setEndian(Endian.Little) }
 
@@ -178,8 +178,7 @@ private fun Long.kilometers(): Long = this / 100000L
 
 private fun Long.toSeconds(): Long = this * 60L
 
-private fun Long.safeUInt(): UInt =
-        this.coerceAtLeast(0L).coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt()
+private fun Long.safeUInt(): UInt = this.coerceAtLeast(0L).coerceAtMost(UInt.MAX_VALUE.toLong()).toUInt()
 
 private fun encodeUInt(value: UInt): UByteArray {
     val buffer = DataBuffer(UInt.SIZE_BYTES).apply { setEndian(Endian.Little) }
@@ -187,8 +186,7 @@ private fun encodeUInt(value: UInt): UByteArray {
     return buffer.array()
 }
 
-private fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long =
-        this.atStartOfDayIn(timeZone).epochSeconds
+private fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long = this.atStartOfDayIn(timeZone).epochSeconds
 
 private fun randomToken(): UShort = Random.nextInt(0, UShort.MAX_VALUE.toInt()).toUShort()
 
@@ -210,23 +208,22 @@ private const val KEY_AVERAGE_DAILY_STEPS = "average_dailySteps"
 private const val KEY_AVERAGE_SLEEP_DURATION = "average_sleepDuration"
 
 private val MOVEMENT_KEYS =
-        mapOf(
-                DayOfWeek.MONDAY to "monday_movementData",
-                DayOfWeek.TUESDAY to "tuesday_movementData",
-                DayOfWeek.WEDNESDAY to "wednesday_movementData",
-                DayOfWeek.THURSDAY to "thursday_movementData",
-                DayOfWeek.FRIDAY to "friday_movementData",
-                DayOfWeek.SATURDAY to "saturday_movementData",
-                DayOfWeek.SUNDAY to "sunday_movementData",
-        )
+    mapOf(DayOfWeek.MONDAY to "monday_movementData",
+        DayOfWeek.TUESDAY to "tuesday_movementData",
+        DayOfWeek.WEDNESDAY to "wednesday_movementData",
+        DayOfWeek.THURSDAY to "thursday_movementData",
+        DayOfWeek.FRIDAY to "friday_movementData",
+        DayOfWeek.SATURDAY to "saturday_movementData",
+        DayOfWeek.SUNDAY to "sunday_movementData"
+    )
 
 private val SLEEP_KEYS =
-        mapOf(
-                DayOfWeek.MONDAY to "monday_sleepData",
-                DayOfWeek.TUESDAY to "tuesday_sleepData",
-                DayOfWeek.WEDNESDAY to "wednesday_sleepData",
-                DayOfWeek.THURSDAY to "thursday_sleepData",
-                DayOfWeek.FRIDAY to "friday_sleepData",
-                DayOfWeek.SATURDAY to "saturday_sleepData",
-                DayOfWeek.SUNDAY to "sunday_sleepData",
-        )
+    mapOf(
+        DayOfWeek.MONDAY to "monday_sleepData",
+        DayOfWeek.TUESDAY to "tuesday_sleepData",
+        DayOfWeek.WEDNESDAY to "wednesday_sleepData",
+        DayOfWeek.THURSDAY to "thursday_sleepData",
+        DayOfWeek.FRIDAY to "friday_sleepData",
+        DayOfWeek.SATURDAY to "saturday_sleepData",
+        DayOfWeek.SUNDAY to "sunday_sleepData",
+    )

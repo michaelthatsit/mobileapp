@@ -64,31 +64,25 @@ import kotlinx.datetime.toLocalDateTime
  * - Phone database is source of truth during reconciliation
  */
 class HealthService(
-        private val protocolHandler: PebbleProtocolHandler,
-        private val scope: ConnectionCoroutineScope,
-        private val healthDao: HealthDao,
-        private val appRunStateService: AppRunStateService,
-        private val blobDBService: BlobDBService,
-        private val healthStatDao: HealthStatDao,
+    private val protocolHandler: PebbleProtocolHandler,
+    private val scope: ConnectionCoroutineScope,
+    private val healthDao: HealthDao,
+    private val appRunStateService: AppRunStateService,
+    private val blobDBService: BlobDBService,
+    private val healthStatDao: HealthStatDao,
 ) : ProtocolService, Health {
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
     private val lastFullStatsUpdate = MutableStateFlow(0L) // Epoch millis of last full stats push
-    private val lastTodayUpdateDate =
-            MutableStateFlow<LocalDate?>(null) // Date of last today movement update
+    private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null) // Date of last today movement update
     private val lastTodayUpdateTime = MutableStateFlow(0L) // Epoch millis of last today update
-    private val lastDataReceptionTime =
-            MutableStateFlow(0L) // Epoch millis of last data reception from watch
-    private val acceptHealthData =
-            MutableStateFlow(
-                    true
-            ) // When false, drops all incoming health data (used during reconciliation)
+    private val lastDataReceptionTime = MutableStateFlow(0L) // Epoch millis of last data reception from watch
+    private val acceptHealthData = MutableStateFlow(true) // When false, drops all incoming health data (used during reconciliation)
 
     companion object {
         private val logger = Logger.withTag("HealthService")
 
-        private val HEALTH_TAGS =
-                setOf(HEALTH_STEPS_TAG, HEALTH_SLEEP_TAG, HEALTH_OVERLAY_TAG, HEALTH_HR_TAG)
+        private val HEALTH_TAGS = setOf(HEALTH_STEPS_TAG, HEALTH_SLEEP_TAG, HEALTH_OVERLAY_TAG, HEALTH_HR_TAG)
         private const val HEALTH_STEPS_TAG: UInt = 81u
         private const val HEALTH_SLEEP_TAG: UInt = 83u
         private const val HEALTH_OVERLAY_TAG: UInt = 84u
@@ -100,8 +94,7 @@ class HealthService(
         private const val HEALTH_SYNC_POLL_MS = 1000L
         private const val RECONCILE_DELAY_MS = 1000L
         private const val FULL_STATS_THROTTLE_HOURS = 12L
-        private const val BACKGROUND_THROTTLE_MS =
-                30 * 60_000L // 30 minutes throttle when app is in background
+        private const val BACKGROUND_THROTTLE_MS = 30 * 60_000L // 30 minutes throttle when app is in background
         private const val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
     }
 
@@ -192,27 +185,26 @@ class HealthService(
 
     private suspend fun sendHealthDataRequest(fullSync: Boolean) {
         val packet =
-                if (fullSync) {
-                    logger.d { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
-                    HealthSyncOutgoingPacket.RequestFirstSync(
-                            System.now().epochSeconds.toUInt()
-                    )
-                } else {
-                    val lastSync = healthDao.getLatestTimestamp() ?: 0L
-                    val currentTime = System.now().epochSeconds
-                    val timeSinceLastSync =
-                            if (lastSync > 0) {
-                                (currentTime - (lastSync / 1000)).coerceAtLeast(60)
-                            } else {
-                                0
-                            }
-
-                    logger.d {
-                        "HEALTH_SERVICE: Requesting incremental health data sync (last ${timeSinceLastSync}s)"
+            if (fullSync) {
+                logger.d { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
+                HealthSyncOutgoingPacket.RequestFirstSync(
+                    System.now().epochSeconds.toUInt()
+                )
+            } else {
+                val lastSync = healthDao.getLatestTimestamp() ?: 0L
+                val currentTime = System.now().epochSeconds
+                val timeSinceLastSync =
+                    if (lastSync > 0) {
+                        (currentTime - (lastSync / 1000)).coerceAtLeast(60)
+                    } else {
+                        0
                     }
-                    HealthSyncOutgoingPacket.RequestSync(timeSinceLastSync.toUInt())
-                }
 
+                logger.d {
+                    "HEALTH_SERVICE: Requesting incremental health data sync (last ${timeSinceLastSync}s)"
+                }
+                HealthSyncOutgoingPacket.RequestSync(timeSinceLastSync.toUInt())
+            }
         protocolHandler.send(packet)
     }
 
@@ -224,11 +216,11 @@ class HealthService(
                 val latest = healthDao.getLatestTimestamp() ?: 0L
 
                 val hasNewer =
-                        if (baseline == 0L) {
-                            latest > 0L
-                        } else {
-                            latest > baseline
-                        }
+                    if (baseline == 0L) {
+                        latest > 0L
+                    } else {
+                        latest > baseline
+                    }
 
                 if (hasNewer) return@withTimeoutOrNull true
             }
@@ -239,23 +231,23 @@ class HealthService(
 
     private fun listenForHealthUpdates() {
         appRunStateService
-                .runningApp
-                .map { it != null }
-                .distinctUntilChanged { old, new -> old == new }
-                .onEach { isAppOpen.value = it }
-                .launchIn(scope)
+            .runningApp
+            .map { it != null }
+            .distinctUntilChanged { old, new -> old == new }
+            .onEach { isAppOpen.value = it }
+            .launchIn(scope)
 
         protocolHandler
-                .inboundMessages
-                .onEach { packet ->
-                    when (packet) {
-                        is DataLoggingIncomingPacket.OpenSession -> handleSessionOpen(packet)
-                        is DataLoggingIncomingPacket.SendDataItems -> handleSendDataItems(packet)
-                        is DataLoggingIncomingPacket.CloseSession -> handleSessionClose(packet)
-                        is HealthSyncIncomingPacket -> handleHealthSyncRequest(packet)
-                    }
+            .inboundMessages
+            .onEach { packet ->
+                when (packet) {
+                    is DataLoggingIncomingPacket.OpenSession -> handleSessionOpen(packet)
+                    is DataLoggingIncomingPacket.SendDataItems -> handleSendDataItems(packet)
+                    is DataLoggingIncomingPacket.CloseSession -> handleSessionClose(packet)
+                    is HealthSyncIncomingPacket -> handleHealthSyncRequest(packet)
                 }
-                .launchIn(scope)
+            }
+            .launchIn(scope)
     }
 
     private fun handleHealthSyncRequest(packet: HealthSyncIncomingPacket) {
@@ -273,29 +265,25 @@ class HealthService(
                 val now = System.now().toLocalDateTime(timeZone)
                 val lastUpdateTime = lastFullStatsUpdate.value
                 val hoursSinceLastUpdate =
-                        if (lastUpdateTime > 0) {
-                            (System.now().toEpochMilliseconds() -
-                                    lastUpdateTime) / (60 * 60_000L)
-                        } else {
-                            24L
-                        }
+                    if (lastUpdateTime > 0) {
+                        (System.now().toEpochMilliseconds() - lastUpdateTime) / (60 * 60_000L)
+                    } else {
+                        24L
+                    }
 
                 // Calculate next morning update time (7 AM)
                 val tomorrow = now.date.plus(DatePeriod(days = 1))
                 val nextMorning =
                         LocalDateTime(
-                                tomorrow.year,
-                                tomorrow.month,
-                                tomorrow.dayOfMonth,
-                                MORNING_WAKE_HOUR,
-                                0,
-                                0
+                            tomorrow.year,
+                            tomorrow.month,
+                            tomorrow.dayOfMonth,
+                            MORNING_WAKE_HOUR,
+                            0,
+                            0
                         )
                 val morningInstant = nextMorning.toInstant(timeZone)
-                val delayUntilMorning =
-                        (morningInstant.toEpochMilliseconds() -
-                                        System.now().toEpochMilliseconds())
-                                .coerceAtLeast(0L)
+                val delayUntilMorning = (morningInstant.toEpochMilliseconds() - System.now().toEpochMilliseconds()).coerceAtLeast(0L)
 
                 // Wait until morning or 24 hours, whichever comes first
                 val delayTime = minOf(delayUntilMorning, TWENTY_FOUR_HOURS_MS)
@@ -354,7 +342,7 @@ class HealthService(
             logger.d {
                 buildString {
                     append(
-                            "HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, "
+                        "HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, "
                     )
                     append("$payloadSize bytes, $itemsLeft items remaining")
                     if (summary != null) {
@@ -450,14 +438,14 @@ class HealthService(
         val totalActiveMin = records.sumOf { it.activeMinutes }
         val heartRateRecords = records.filter { it.heartRate > 0 }
         val avgHeartRate =
-                if (heartRateRecords.isNotEmpty()) {
-                    heartRateRecords.map { it.heartRate }.average().toInt()
-                } else 0
+            if (heartRateRecords.isNotEmpty()) {
+                heartRateRecords.map { it.heartRate }.average().toInt()
+            } else 0
 
         val hrSummary =
-                if (heartRateRecords.isNotEmpty()) {
-                    "avgHR=$avgHeartRate"
-                } else "no HR"
+            if (heartRateRecords.isNotEmpty()) {
+                "avgHR=$avgHeartRate"
+            } else "no HR"
 
         val firstTs = records.firstOrNull()?.timestamp
         val lastTs = records.lastOrNull()?.timestamp
@@ -484,8 +472,7 @@ class HealthService(
 
         val sleepRecords =
                 allRecords.filter { type ->
-                    val overlayType =
-                            OverlayType.fromValue(type.type)
+                    val overlayType = OverlayType.fromValue(type.type)
                     overlayType != null && isSleepType(overlayType)
                 }
         val totalSleepMinutes = sleepRecords.sumOf { (it.duration / 60).toInt() }
@@ -493,18 +480,16 @@ class HealthService(
 
         val activityRecords =
                 allRecords.filter { type ->
-                    val overlayType =
-                            OverlayType.fromValue(type.type)
+                    val overlayType = OverlayType.fromValue(type.type)
                     overlayType == OverlayType.Walk ||
-                            overlayType == OverlayType.Run
+                        overlayType == OverlayType.Run
                 }
         val activitySteps = activityRecords.sumOf { it.steps }
         val activityDistanceKm = activityRecords.sumOf { it.distanceCm } / 100000.0
 
         val sleepHrs = (totalSleepHours * 10).toInt() / 10.0
         val distKm = (activityDistanceKm * 100).toInt() / 100.0
-        val summary =
-                "records=${allRecords.size}, sleep=${sleepRecords.size} (${sleepHrs}h), activities=${activityRecords.size} (steps=$activitySteps, distance=${distKm}km)"
+        val summary ="records=${allRecords.size}, sleep=${sleepRecords.size} (${sleepHrs}h), activities=${activityRecords.size} (steps=$activitySteps, distance=${distKm}km)"
 
         healthDao.insertOverlayDataWithDeduplication(allRecords)
         logger.d {
@@ -513,8 +498,7 @@ class HealthService(
         return summary
     }
 
-    private fun isSleepType(type: OverlayType): Boolean =
-            type.isSleepType()
+    private fun isSleepType(type: OverlayType): Boolean = type.isSleepType()
 
     private suspend fun updateHealthStats() {
         val latestTimestamp = healthDao.getLatestTimestamp()
