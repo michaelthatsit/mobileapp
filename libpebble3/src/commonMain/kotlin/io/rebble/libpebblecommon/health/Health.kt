@@ -11,6 +11,7 @@ import io.rebble.libpebblecommon.database.entity.setWatchSettings
 import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import io.rebble.libpebblecommon.services.calculateHealthAverages
 import io.rebble.libpebblecommon.services.fetchAndGroupDailySleep
+import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +40,7 @@ class Health(
     @OptIn(ExperimentalCoroutinesApi::class)
     override val healthUpdateFlow: Flow<Unit> =
             watches.flatMapLatest { devices ->
-                val device = devices.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
+                val device = devices.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
                 device?.let {
                     // Access the health service through the connected device
                     // This returns a flow that emits when health updates occur
@@ -48,12 +49,12 @@ class Health(
             }
 
     override fun updateHealthSettings(healthSettings: HealthSettings) {
-        logger.i {
+        logger.d {
             "updateHealthSettings called: heightMm=${healthSettings.heightMm}, weightDag=${healthSettings.weightDag}, ageYears=${healthSettings.ageYears}, gender=${healthSettings.gender}, imperialUnits=${healthSettings.imperialUnits}"
         }
         libPebbleCoroutineScope.launch {
             watchSettingsDao.setWatchSettings(healthSettings)
-            logger.i { "Health settings saved to database - will sync to watch via BlobDB" }
+            logger.d { "Health settings saved to database - will sync to watch via BlobDB" }
         }
     }
 
@@ -66,13 +67,13 @@ class Health(
         val todayStart = today.atStartOfDayIn(timeZone).epochSeconds
         val todayEnd = today.plus(DatePeriod(days = 1)).atStartOfDayIn(timeZone).epochSeconds
 
-        logger.i { "HEALTH_DEBUG: Getting health stats for today=$today, todayStart=$todayStart, todayEnd=$todayEnd" }
+        logger.d { "HEALTH_DEBUG: Getting health stats for today=$today, todayStart=$todayStart, todayEnd=$todayEnd" }
 
         val averages = calculateHealthAverages(healthDao, startDate, today, timeZone)
         val todaySteps = healthDao.getTotalStepsExclusiveEnd(todayStart, todayEnd) ?: 0L
         val latestTimestamp = healthDao.getLatestTimestamp()
 
-        logger.i { "HEALTH_DEBUG: todaySteps=$todaySteps, latestTimestamp=$latestTimestamp, averageSteps=${averages.averageStepsPerDay}" }
+        logger.d { "HEALTH_DEBUG: todaySteps=$todaySteps, latestTimestamp=$latestTimestamp, averageSteps=${averages.averageStepsPerDay}" }
 
         val daysOfData = maxOf(averages.stepDaysWithData, averages.sleepDaysWithData)
 
@@ -95,14 +96,14 @@ class Health(
 
     override fun requestHealthData(fullSync: Boolean) {
         libPebbleCoroutineScope.launch {
-            val device = watches.value.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
+            val device = watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
             device?.requestHealthData(fullSync)
         }
     }
 
     override fun sendHealthAveragesToWatch() {
         libPebbleCoroutineScope.launch {
-            val device = watches.value.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
+            val device = watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
             device?.sendHealthAveragesToWatch()
         }
     }

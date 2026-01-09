@@ -24,7 +24,7 @@ suspend fun HealthDao.insertHealthDataWithPriority(data: List<HealthDataEntity>)
                 "Inserted new data at timestamp ${newData.timestamp}: ${newData.steps} steps"
             }
         } else if (newData.steps > existing.steps) {
-            logger.i {
+            logger.d {
                 "Replacing data at timestamp ${newData.timestamp}: ${existing.steps} steps -> ${newData.steps} steps (gained ${newData.steps - existing.steps} steps)"
             }
             insertHealthData(listOf(newData))
@@ -48,7 +48,7 @@ suspend fun HealthDao.insertHealthDataWithPriority(data: List<HealthDataEntity>)
         if (replaced > 0) append("$replaced replaced (higher steps), ")
         if (skipped > 0) append("$skipped skipped (lower/equal steps)")
     }
-    logger.i { summary }
+    logger.d { summary }
 }
 
 /**
@@ -63,5 +63,5 @@ suspend fun HealthDao.insertOverlayDataWithDeduplication(data: List<OverlayDataE
     // will automatically handle deduplication by replacing existing entries
     insertOverlayData(data)
 
-    logger.i { "Overlay data insert complete: ${data.size} entries processed (new entries inserted, duplicates replaced)" }
+    logger.d { "Overlay data insert complete: ${data.size} entries processed (new entries inserted, duplicates replaced)" }
 }

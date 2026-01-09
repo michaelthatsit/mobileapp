@@ -18,6 +18,7 @@ import io.rebble.libpebblecommon.packets.HealthSyncIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
 import io.rebble.libpebblecommon.services.app.AppRunStateService
 import io.rebble.libpebblecommon.services.blobdb.BlobDBService
+import io.rebble.libpebblecommon.connection.ConnectedPebble.Health
 import kotlin.time.Clock.System
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
@@ -69,7 +70,7 @@ class HealthService(
         private val appRunStateService: AppRunStateService,
         private val blobDBService: BlobDBService,
         private val healthStatDao: HealthStatDao,
-) : ProtocolService, io.rebble.libpebblecommon.connection.ConnectedPebble.Health {
+) : ProtocolService, Health {
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
     private val lastFullStatsUpdate = MutableStateFlow(0L) // Epoch millis of last full stats push
@@ -433,7 +434,7 @@ class HealthService(
 
     private suspend fun processStepsData(payload: ByteArray, itemSize: UShort): String? {
         val records = parseStepsData(payload, itemSize)
-        logger.i { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
+        logger.d { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
         if (records.isEmpty()) return null
 
         // Drop all data if we're blocking during reconciliation
@@ -461,9 +462,9 @@ class HealthService(
         val firstTs = records.firstOrNull()?.timestamp
         val lastTs = records.lastOrNull()?.timestamp
 
-        logger.i { "HEALTH_DATA: About to insert ${records.size} records with $totalSteps steps" }
+        logger.d { "HEALTH_DATA: About to insert ${records.size} records with $totalSteps steps" }
         healthDao.insertHealthDataWithPriority(records)
-        logger.i { "HEALTH_DATA: Successfully inserted ${records.size} health records into database" }
+        logger.d { "HEALTH_DATA: Successfully inserted ${records.size} health records into database" }
 
         val distKm = (totalDistanceKm * 100).toInt() / 100.0
         return "records=${records.size}, steps=$totalSteps, $hrSummary, range=$firstTs-$lastTs"
