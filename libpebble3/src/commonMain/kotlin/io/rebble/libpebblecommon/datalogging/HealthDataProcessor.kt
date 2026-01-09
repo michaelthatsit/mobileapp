@@ -1,0 +1,248 @@
+package io.rebble.libpebblecommon.datalogging
+
+import co.touchlab.kermit.Logger
+import io.rebble.libpebblecommon.SystemAppIDs.SYSTEM_APP_UUID
+import io.rebble.libpebblecommon.database.dao.HealthDao
+import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
+import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
+import io.rebble.libpebblecommon.database.entity.HealthStatDao
+import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
+import io.rebble.libpebblecommon.health.parsers.parseOverlayData
+import io.rebble.libpebblecommon.health.parsers.parseStepsData
+import io.rebble.libpebblecommon.services.app.AppRunStateService
+import io.rebble.libpebblecommon.services.updateHealthStatsInDatabase
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock.System
+import kotlin.uuid.Uuid
+
+/**
+ * Processes health data from DataLogging sessions.
+ *
+ * This class is called by Datalogging when health tags (81-85) are received,
+ * and handles session tracking, data parsing, and database storage.
+ */
+class HealthDataProcessor(
+    private val scope: ConnectionCoroutineScope,
+    private val healthDao: HealthDao,
+    private val healthStatDao: HealthStatDao,
+    private val appRunStateService: AppRunStateService,
+) {
+    private val logger = Logger.withTag("HealthDataProcessor")
+
+    private val healthSessions = mutableMapOf<UByte, HealthSession>()
+    private val isAppOpen = MutableStateFlow(false)
+    private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null)
+    private val lastTodayUpdateTime = MutableStateFlow(0L)
+    private val lastDataReceptionTime = MutableStateFlow(0L)
+    private val _acceptHealthData = MutableStateFlow(true)
+
+    val acceptHealthData: StateFlow<Boolean> = _acceptHealthData
+
+    companion object {
+        private const val HEALTH_STEPS_TAG: UInt = 81u
+        private const val HEALTH_SLEEP_TAG: UInt = 83u
+        private const val HEALTH_OVERLAY_TAG: UInt = 84u
+        private const val HEALTH_HR_TAG: UInt = 85u
+
+        private const val BACKGROUND_THROTTLE_MS = 30 * 60 * 1000L // 30 minutes
+
+        val HEALTH_TAGS = setOf(HEALTH_STEPS_TAG, HEALTH_SLEEP_TAG, HEALTH_OVERLAY_TAG, HEALTH_HR_TAG)
+    }
+
+    init {
+        // Track app open/close state for throttling
+        scope.launch {
+            appRunStateService
+                .runningApp
+                .map { it != null }
+                .distinctUntilChanged()
+                .collect { isOpen ->
+                    isAppOpen.value = isOpen
+                }
+        }
+    }
+
+    fun setAcceptHealthData(accept: Boolean) {
+        _acceptHealthData.value = accept
+    }
+
+    fun handleSessionOpen(sessionId: UByte, tag: UInt, applicationUuid: Uuid, itemSize: UShort) {
+        if (tag !in HEALTH_TAGS) return
+
+        healthSessions[sessionId] = HealthSession(tag, applicationUuid, itemSize)
+        logger.d {
+            "HEALTH_SESSION: Opened session $sessionId for ${tagName(tag)} (tag=$tag, itemSize=$itemSize bytes)"
+        }
+    }
+
+    fun handleSendDataItems(sessionId: UByte, payload: ByteArray, itemsLeft: UInt) {
+        val session = healthSessions[sessionId] ?: return
+
+        // Throttle data reception if app is in background
+        val now = System.now().toEpochMilliseconds()
+        val timeSinceLastReception = now - lastDataReceptionTime.value
+        val appInForeground = isAppOpen.value
+
+        if (!appInForeground && timeSinceLastReception < BACKGROUND_THROTTLE_MS) {
+            logger.d {
+                "HEALTH_DATA: Throttling data reception - app in background and last reception was ${timeSinceLastReception / 60_000}min ago (need ${BACKGROUND_THROTTLE_MS / 60_000}min)"
+            }
+            return
+        }
+
+        lastDataReceptionTime.value = now
+
+        val payloadSize = payload.size
+
+        // Process and store the health data in the database
+        scope.launch {
+            val summary = processHealthData(session, payload)
+
+            logger.d {
+                buildString {
+                    append("HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, ")
+                    append("$payloadSize bytes, $itemsLeft items remaining")
+                    if (summary != null) {
+                        append(") - $summary")
+                    } else {
+                        append(")")
+                    }
+                }
+            }
+
+            // Update today's movement and recent sleep data when we finish receiving a batch
+            if (itemsLeft.toInt() == 0) {
+                val timeZone = TimeZone.currentSystemDefault()
+                val today = System.now().toLocalDateTime(timeZone).date
+                val now = System.now().toEpochMilliseconds()
+                val timeSinceLastUpdate = now - lastTodayUpdateTime.value
+
+                val shouldUpdate = lastTodayUpdateDate.value != today
+
+                if (shouldUpdate) {
+                    logger.d {
+                        "HEALTH_DATA: Received new data, updating today's movement and recent sleep data (last update ${timeSinceLastUpdate / 60_000}min ago)"
+                    }
+                    // Today's data is included in the weekly update, no separate call needed
+                    updateHealthStatsInDatabase(healthDao, healthStatDao, today, today.minus(DatePeriod(days = 29)), timeZone)
+                    lastTodayUpdateDate.value = today
+                    lastTodayUpdateTime.value = now
+                } else {
+                    logger.d { "HEALTH_DATA: Skipping today update - already updated today" }
+                }
+            }
+        }
+    }
+
+    fun handleSessionClose(sessionId: UByte) {
+        healthSessions.remove(sessionId)?.let { session ->
+            logger.d { "HEALTH_SESSION: Closed session $sessionId for ${tagName(session.tag)}" }
+        }
+    }
+
+    private fun tagName(tag: UInt): String =
+        when (tag) {
+            HEALTH_STEPS_TAG -> "STEPS"
+            HEALTH_SLEEP_TAG -> "SLEEP"
+            HEALTH_OVERLAY_TAG -> "OVERLAY"
+            HEALTH_HR_TAG -> "HEART_RATE"
+            else -> "UNKNOWN($tag)"
+        }
+
+    private suspend fun processHealthData(session: HealthSession, payload: ByteArray): String? {
+        // Only process health data from the system app
+        if (session.appUuid != SYSTEM_APP_UUID) {
+            logger.d { "Ignoring health data from non-system app: ${session.appUuid}" }
+            return null
+        }
+
+        return when (session.tag) {
+            HEALTH_STEPS_TAG -> processStepsData(payload, session.itemSize)
+            HEALTH_OVERLAY_TAG -> processOverlayData(payload, session.itemSize)
+            HEALTH_SLEEP_TAG -> {
+                // Sleep data is sent as overlay data with sleep types
+                logger.d { "Received sleep tag data, processing as overlay" }
+                processOverlayData(payload, session.itemSize)
+            }
+            HEALTH_HR_TAG -> {
+                // Heart rate data is embedded in steps data for newer firmware
+                logger.d { "Received standalone HR data (tag 85), currently handled in steps data" }
+                null
+            }
+            else -> {
+                logger.w { "Unknown health data tag: ${session.tag}" }
+                null
+            }
+        }
+    }
+
+    private suspend fun processStepsData(payload: ByteArray, itemSize: UShort): String? {
+        val records = parseStepsData(payload, itemSize)
+        logger.d { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
+        if (records.isEmpty()) return null
+
+        // Drop all data if we're blocking during reconciliation
+        if (!acceptHealthData.value) {
+            logger.d { "HEALTH_DATA: Dropped ${records.size} step records during reconciliation" }
+            return "dropped ${records.size} records"
+        }
+
+        val totalSteps = records.sumOf { it.steps }
+        val totalActiveKcal = records.sumOf { it.activeGramCalories } / 1000
+        val totalRestingKcal = records.sumOf { it.restingGramCalories } / 1000
+        val totalDistanceKm = records.sumOf { it.distanceCm } / 100000.0
+        val totalActiveMin = records.sumOf { it.activeMinutes }
+        val heartRateRecords = records.filter { it.heartRate > 0 }
+        val avgHeartRate =
+            if (heartRateRecords.isNotEmpty()) {
+                heartRateRecords.map { it.heartRate }.average().toInt()
+            } else 0
+
+        val hrSummary =
+            if (heartRateRecords.isNotEmpty()) {
+                "avgHR=$avgHeartRate"
+            } else "no HR"
+
+        logger.d {
+            "HEALTH_DATA: Successfully inserted ${records.size} records (steps=$totalSteps, active=${totalActiveKcal}kcal, resting=${totalRestingKcal}kcal, distance=${totalDistanceKm}km, activeMin=$totalActiveMin, $hrSummary)"
+        }
+
+        healthDao.insertHealthDataWithPriority(records)
+
+        return "${records.size} records (${totalSteps} steps)"
+    }
+
+    private suspend fun processOverlayData(payload: ByteArray, itemSize: UShort): String? {
+        val records = parseOverlayData(payload, itemSize)
+        logger.d { "HEALTH_DATA: Parsed ${records.size} overlay records from payload" }
+        if (records.isEmpty()) return null
+
+        // Drop all data if we're blocking during reconciliation
+        if (!acceptHealthData.value) {
+            logger.d { "HEALTH_DATA: Dropped ${records.size} overlay records during reconciliation" }
+            return "dropped ${records.size} records"
+        }
+
+        healthDao.insertOverlayDataWithDeduplication(records)
+
+        val totalDurationHours = records.sumOf { it.duration } / 3600.0
+        return "${records.size} overlay records (${totalDurationHours.format(1)}h total)"
+    }
+
+    private fun Double.format(decimals: Int): String = "%.${decimals}f".format(this)
+}
+
+data class HealthSession(
+    val tag: UInt,
+    val appUuid: Uuid,
+    val itemSize: UShort,
+)

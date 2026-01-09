@@ -16,10 +16,26 @@ import kotlin.uuid.Uuid
 class Datalogging(
     private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
     private val webServices: WebServices,
+    private val healthDataProcessor: HealthDataProcessor,
 ) {
     private val logger = Logger.withTag("Datalogging")
 
-    fun logData(uuid: Uuid, tag: UInt, data: ByteArray, watchInfo: WatchInfo, itemSize: UShort) {
+    fun logData(
+        sessionId: UByte,
+        uuid: Uuid,
+        tag: UInt,
+        data: ByteArray,
+        watchInfo: WatchInfo,
+        itemSize: UShort,
+        itemsLeft: UInt,
+    ) {
+        // Handle health tags
+        if (tag in HealthDataProcessor.HEALTH_TAGS) {
+            healthDataProcessor.handleSendDataItems(sessionId, data, itemsLeft)
+            return
+        }
+
+        // Handle Memfault chunks (system app only)
         if (uuid == SYSTEM_APP_UUID) {
             when (tag) {
                 MEMFAULT_CHUNKS_TAG -> {
@@ -31,6 +47,18 @@ class Datalogging(
                     }
                 }
             }
+        }
+    }
+
+    fun openSession(sessionId: UByte, tag: UInt, applicationUuid: Uuid, itemSize: UShort) {
+        if (tag in HealthDataProcessor.HEALTH_TAGS) {
+            healthDataProcessor.handleSessionOpen(sessionId, tag, applicationUuid, itemSize)
+        }
+    }
+
+    fun closeSession(sessionId: UByte, tag: UInt) {
+        if (tag in HealthDataProcessor.HEALTH_TAGS) {
+            healthDataProcessor.handleSessionClose(sessionId)
         }
     }
 

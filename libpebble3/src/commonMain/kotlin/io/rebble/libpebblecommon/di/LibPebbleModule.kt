@@ -111,6 +111,7 @@ import io.rebble.libpebblecommon.notification.NotificationApi
 import io.rebble.libpebblecommon.services.AppFetchService
 import io.rebble.libpebblecommon.services.AppReorderService
 import io.rebble.libpebblecommon.services.AudioStreamService
+import io.rebble.libpebblecommon.datalogging.HealthDataProcessor
 import io.rebble.libpebblecommon.services.DataLoggingService
 import io.rebble.libpebblecommon.services.GetBytesService
 import io.rebble.libpebblecommon.services.HealthService
@@ -326,6 +327,7 @@ fun initKoin(
                 single { get<Database>().vibePatternDao() }
                 single { get<Database>().healthDao() }
                 single { get<Database>().healthStatDao() }
+                singleOf(::HealthDataProcessor)
                 singleOf(::WatchManager) bind WatchConnector::class
                 single { bleScanner() }
                 singleOf(::RealScanning) bind Scanning::class

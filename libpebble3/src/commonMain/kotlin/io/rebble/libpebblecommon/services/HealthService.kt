@@ -3,17 +3,11 @@ package io.rebble.libpebblecommon.services
 import co.touchlab.kermit.Logger
 import io.rebble.libpebblecommon.SystemAppIDs.SYSTEM_APP_UUID
 import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
+import io.rebble.libpebblecommon.datalogging.HealthDataProcessor
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.entity.HealthStatDao
-import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
-import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.health.HealthDebugStats
-import io.rebble.libpebblecommon.health.OverlayType
-import io.rebble.libpebblecommon.health.isSleepType
-import io.rebble.libpebblecommon.health.parsers.parseOverlayData
-import io.rebble.libpebblecommon.health.parsers.parseStepsData
-import io.rebble.libpebblecommon.packets.DataLoggingIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncIncomingPacket
 import io.rebble.libpebblecommon.packets.HealthSyncOutgoingPacket
 import io.rebble.libpebblecommon.services.app.AppRunStateService
@@ -41,6 +35,7 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * Handles health data synchronization between watch and phone.
@@ -70,23 +65,12 @@ class HealthService(
     private val appRunStateService: AppRunStateService,
     private val blobDBService: BlobDBService,
     private val healthStatDao: HealthStatDao,
+    private val healthDataProcessor: HealthDataProcessor,
 ) : ProtocolService, Health {
-    private val healthSessions = mutableMapOf<UByte, HealthSession>()
-    private val isAppOpen = MutableStateFlow(false)
     private val lastFullStatsUpdate = MutableStateFlow(0L) // Epoch millis of last full stats push
-    private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null) // Date of last today movement update
-    private val lastTodayUpdateTime = MutableStateFlow(0L) // Epoch millis of last today update
-    private val lastDataReceptionTime = MutableStateFlow(0L) // Epoch millis of last data reception from watch
-    private val acceptHealthData = MutableStateFlow(true) // When false, drops all incoming health data (used during reconciliation)
 
     companion object {
         private val logger = Logger.withTag("HealthService")
-
-        private val HEALTH_TAGS = setOf(HEALTH_STEPS_TAG, HEALTH_SLEEP_TAG, HEALTH_OVERLAY_TAG, HEALTH_HR_TAG)
-        private const val HEALTH_STEPS_TAG: UInt = 81u
-        private const val HEALTH_SLEEP_TAG: UInt = 83u
-        private const val HEALTH_OVERLAY_TAG: UInt = 84u
-        private const val HEALTH_HR_TAG: UInt = 85u
 
         private val TWENTY_FOUR_HOURS_MS = 1.days.inWholeMilliseconds
         private const val HEALTH_STATS_AVERAGE_DAYS = 30
@@ -94,7 +78,6 @@ class HealthService(
         private const val HEALTH_SYNC_POLL_MS = 1000L
         private const val RECONCILE_DELAY_MS = 1000L
         private const val FULL_STATS_THROTTLE_HOURS = 12L
-        private const val BACKGROUND_THROTTLE_MS = 30 * 60_000L // 30 minutes throttle when app is in background
         private const val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
     }
 
@@ -132,7 +115,7 @@ class HealthService(
         val baselineTimestamp = healthDao.getLatestTimestamp() ?: 0L
         val isFirstSync = baselineTimestamp == 0L
         val now = System.now().toEpochMilliseconds()
-        val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60 * 60_000L)
+        val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60.minutes.inWholeMilliseconds)
 
         logger.d {
             "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)"
@@ -141,7 +124,7 @@ class HealthService(
         try {
             // Temporarily reject all health data during reconciliation to prevent stale data from
             // idle watches
-            acceptHealthData.value = false
+            healthDataProcessor.setAcceptHealthData(false)
             logger.d {
                 "HEALTH_SYNC: Blocking all health data during reconciliation - phone DB is source of truth"
             }
@@ -158,7 +141,7 @@ class HealthService(
             }
         } finally {
             // Re-enable health data acceptance after reconciliation
-            acceptHealthData.value = true
+            healthDataProcessor.setAcceptHealthData(true)
         }
 
         // Push full stats to watch on connection (assume watch may have switched or been reset)
@@ -168,14 +151,8 @@ class HealthService(
             logger.d {
                 "HEALTH_SYNC: Pushing phone database to watch (treating as new/switched watch)"
             }
-            // Reset today's update flag so it can be updated again if needed
-            lastTodayUpdateDate.value = null
             updateHealthStats()
             lastFullStatsUpdate.value = now
-            // Mark that we've updated today so we don't do it again immediately
-            val timeZone = TimeZone.currentSystemDefault()
-            val today = System.now().toLocalDateTime(timeZone).date
-            lastTodayUpdateDate.value = today
         } else {
             logger.d {
                 "HEALTH_SYNC: Skipping full stats push - recently updated ${hoursSinceLastFullUpdate}h ago (prevents reconnection spam)"
@@ -230,20 +207,10 @@ class HealthService(
     }
 
     private fun listenForHealthUpdates() {
-        appRunStateService
-            .runningApp
-            .map { it != null }
-            .distinctUntilChanged { old, new -> old == new }
-            .onEach { isAppOpen.value = it }
-            .launchIn(scope)
-
         protocolHandler
             .inboundMessages
             .onEach { packet ->
                 when (packet) {
-                    is DataLoggingIncomingPacket.OpenSession -> handleSessionOpen(packet)
-                    is DataLoggingIncomingPacket.SendDataItems -> handleSendDataItems(packet)
-                    is DataLoggingIncomingPacket.CloseSession -> handleSessionClose(packet)
                     is HealthSyncIncomingPacket -> handleHealthSyncRequest(packet)
                 }
             }
@@ -266,7 +233,7 @@ class HealthService(
                 val lastUpdateTime = lastFullStatsUpdate.value
                 val hoursSinceLastUpdate =
                     if (lastUpdateTime > 0) {
-                        (System.now().toEpochMilliseconds() - lastUpdateTime) / (60 * 60_000L)
+                        (System.now().toEpochMilliseconds() - lastUpdateTime) / (60.minutes.inWholeMilliseconds)
                     } else {
                         24L
                     }
@@ -301,204 +268,6 @@ class HealthService(
         }
     }
 
-    private fun handleSessionOpen(packet: DataLoggingIncomingPacket.OpenSession) {
-        val tag = packet.tag.get()
-        val sessionId = packet.sessionId.get()
-        if (tag !in HEALTH_TAGS) return
-
-        val applicationUuid = packet.applicationUUID.get()
-        val itemSize = packet.dataItemSize.get()
-        healthSessions[sessionId] = HealthSession(tag, applicationUuid, itemSize)
-        logger.d {
-            "HEALTH_SESSION: Opened session $sessionId for ${tagName(tag)} (tag=$tag, itemSize=$itemSize bytes)"
-        }
-    }
-
-    private fun handleSendDataItems(packet: DataLoggingIncomingPacket.SendDataItems) {
-        val sessionId = packet.sessionId.get()
-        val session = healthSessions[sessionId] ?: return
-
-        // Throttle data reception if app is in background
-        val now = System.now().toEpochMilliseconds()
-        val timeSinceLastReception = now - lastDataReceptionTime.value
-        val appInForeground = isAppOpen.value
-
-        if (!appInForeground && timeSinceLastReception < BACKGROUND_THROTTLE_MS) {
-            logger.d {
-                "HEALTH_DATA: Throttling data reception - app in background and last reception was ${timeSinceLastReception / 60_000}min ago (need ${BACKGROUND_THROTTLE_MS / 60_000}min)"
-            }
-            return
-        }
-
-        lastDataReceptionTime.value = now
-
-        val payload = packet.payload.get().toByteArray()
-        val payloadSize = payload.size
-        val itemsLeft = packet.itemsLeftAfterThis.get()
-        // Process and store the health data in the database
-        scope.launch {
-            val summary = processHealthData(session, payload)
-
-            logger.d {
-                buildString {
-                    append(
-                        "HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, "
-                    )
-                    append("$payloadSize bytes, $itemsLeft items remaining")
-                    if (summary != null) {
-                        append(") - $summary")
-                    } else {
-                        append(")")
-                    }
-                }
-            }
-
-            // Update today's movement and recent sleep data when we finish receiving a batch
-            if (itemsLeft.toInt() == 0) {
-                val timeZone = TimeZone.currentSystemDefault()
-                val today = System.now().toLocalDateTime(timeZone).date
-                val now = System.now().toEpochMilliseconds()
-                val timeSinceLastUpdate = now - lastTodayUpdateTime.value
-
-                val shouldUpdate = lastTodayUpdateDate.value != today
-
-                if (shouldUpdate) {
-                    logger.d {
-                        "HEALTH_DATA: Received new data, updating today's movement and recent sleep data (last update ${timeSinceLastUpdate / 60_000}min ago)"
-                    }
-                    // Today's data is included in the weekly update, no separate call needed
-                    updateHealthStatsInDatabase(healthDao, healthStatDao, today, today.minus(DatePeriod(days = 29)), timeZone)
-                    lastTodayUpdateDate.value = today
-                    lastTodayUpdateTime.value = now
-                } else {
-                    logger.d { "HEALTH_DATA: Skipping today update - already updated today" }
-                }
-            }
-        }
-    }
-
-    private fun handleSessionClose(packet: DataLoggingIncomingPacket.CloseSession) {
-        val sessionId = packet.sessionId.get()
-        healthSessions.remove(sessionId)?.let { session ->
-            logger.d { "HEALTH_SESSION: Closed session $sessionId for ${tagName(session.tag)}" }
-        }
-    }
-
-    private fun tagName(tag: UInt): String =
-            when (tag) {
-                HEALTH_STEPS_TAG -> "STEPS"
-                HEALTH_SLEEP_TAG -> "SLEEP"
-                HEALTH_OVERLAY_TAG -> "OVERLAY"
-                HEALTH_HR_TAG -> "HEART_RATE"
-                else -> "UNKNOWN($tag)"
-            }
-
-    private suspend fun processHealthData(session: HealthSession, payload: ByteArray): String? {
-        // Only process health data from the system app
-        if (session.appUuid != SYSTEM_APP_UUID) {
-            logger.d { "Ignoring health data from non-system app: ${session.appUuid}" }
-            return null
-        }
-
-        return when (session.tag) {
-            HEALTH_STEPS_TAG -> processStepsData(payload, session.itemSize)
-            HEALTH_OVERLAY_TAG -> processOverlayData(payload, session.itemSize)
-            HEALTH_SLEEP_TAG -> {
-                // Sleep data is sent as overlay data with sleep types
-                logger.d { "Received sleep tag data, processing as overlay" }
-                processOverlayData(payload, session.itemSize)
-            }
-            HEALTH_HR_TAG -> {
-                // Heart rate data is embedded in steps data for newer firmware
-                logger.d { "Received standalone HR data (tag 85), currently handled in steps data" }
-                null
-            }
-            else -> {
-                logger.w { "Unknown health data tag: ${session.tag}" }
-                null
-            }
-        }
-    }
-
-    private suspend fun processStepsData(payload: ByteArray, itemSize: UShort): String? {
-        val records = parseStepsData(payload, itemSize)
-        logger.d { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
-        if (records.isEmpty()) return null
-
-        // Drop all data if we're blocking during reconciliation
-        if (!acceptHealthData.value) {
-            logger.d { "HEALTH_DATA: Dropped ${records.size} step records during reconciliation" }
-            return "dropped ${records.size} records"
-        }
-
-        val totalSteps = records.sumOf { it.steps }
-        val totalActiveKcal = records.sumOf { it.activeGramCalories } / 1000
-        val totalRestingKcal = records.sumOf { it.restingGramCalories } / 1000
-        val totalDistanceKm = records.sumOf { it.distanceCm } / 100000.0
-        val totalActiveMin = records.sumOf { it.activeMinutes }
-        val heartRateRecords = records.filter { it.heartRate > 0 }
-        val avgHeartRate =
-            if (heartRateRecords.isNotEmpty()) {
-                heartRateRecords.map { it.heartRate }.average().toInt()
-            } else 0
-
-        val hrSummary =
-            if (heartRateRecords.isNotEmpty()) {
-                "avgHR=$avgHeartRate"
-            } else "no HR"
-
-        val firstTs = records.firstOrNull()?.timestamp
-        val lastTs = records.lastOrNull()?.timestamp
-
-        logger.d { "HEALTH_DATA: About to insert ${records.size} records with $totalSteps steps" }
-        healthDao.insertHealthDataWithPriority(records)
-        logger.d { "HEALTH_DATA: Successfully inserted ${records.size} health records into database" }
-
-        val distKm = (totalDistanceKm * 100).toInt() / 100.0
-        return "records=${records.size}, steps=$totalSteps, $hrSummary, range=$firstTs-$lastTs"
-    }
-
-    private suspend fun processOverlayData(payload: ByteArray, itemSize: UShort): String? {
-        val allRecords = parseOverlayData(payload, itemSize)
-        if (allRecords.isEmpty()) return null
-
-        // Drop all data if we're blocking during reconciliation
-        if (!acceptHealthData.value) {
-            logger.d {
-                "HEALTH_DATA: Dropped ${allRecords.size} overlay records during reconciliation"
-            }
-            return "dropped ${allRecords.size} records"
-        }
-
-        val sleepRecords =
-                allRecords.filter { type ->
-                    val overlayType = OverlayType.fromValue(type.type)
-                    overlayType != null && isSleepType(overlayType)
-                }
-        val totalSleepMinutes = sleepRecords.sumOf { (it.duration / 60).toInt() }
-        val totalSleepHours = totalSleepMinutes / 60.0
-
-        val activityRecords =
-                allRecords.filter { type ->
-                    val overlayType = OverlayType.fromValue(type.type)
-                    overlayType == OverlayType.Walk ||
-                        overlayType == OverlayType.Run
-                }
-        val activitySteps = activityRecords.sumOf { it.steps }
-        val activityDistanceKm = activityRecords.sumOf { it.distanceCm } / 100000.0
-
-        val sleepHrs = (totalSleepHours * 10).toInt() / 10.0
-        val distKm = (activityDistanceKm * 100).toInt() / 100.0
-        val summary ="records=${allRecords.size}, sleep=${sleepRecords.size} (${sleepHrs}h), activities=${activityRecords.size} (steps=$activitySteps, distance=${distKm}km)"
-
-        healthDao.insertOverlayDataWithDeduplication(allRecords)
-        logger.d {
-            "HEALTH_DATA: Processed ${allRecords.size} overlay records (see deduplication summary above)"
-        }
-        return summary
-    }
-
-    private fun isSleepType(type: OverlayType): Boolean = type.isSleepType()
 
     private suspend fun updateHealthStats() {
         val latestTimestamp = healthDao.getLatestTimestamp()
@@ -518,6 +287,4 @@ class HealthService(
             logger.d { "Health stats updated (latestTimestamp=$latestTimestamp)" }
         }
     }
-
-    private data class HealthSession(val tag: UInt, val appUuid: Uuid, val itemSize: UShort)
 }
