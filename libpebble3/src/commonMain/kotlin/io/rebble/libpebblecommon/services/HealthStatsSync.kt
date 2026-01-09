@@ -4,6 +4,8 @@ import co.touchlab.kermit.Logger
 import coredev.BlobDatabase
 import io.rebble.libpebblecommon.database.dao.HealthAggregates
 import io.rebble.libpebblecommon.database.dao.HealthDao
+import io.rebble.libpebblecommon.database.entity.HealthStat
+import io.rebble.libpebblecommon.database.entity.HealthStatDao
 import io.rebble.libpebblecommon.packets.blobdb.BlobCommand
 import io.rebble.libpebblecommon.packets.blobdb.BlobResponse
 import io.rebble.libpebblecommon.services.blobdb.BlobDBService
@@ -21,13 +23,13 @@ import kotlinx.datetime.plus
 
 private val logger = Logger.withTag("HealthStatsSync")
 
-/** Sends complete health stats to watch (averages + weekly movement + weekly sleep) */
-internal suspend fun sendHealthStatsToWatch(
-        healthDao: HealthDao,
-        blobDBService: BlobDBService,
-        today: LocalDate,
-        startDate: LocalDate,
-        timeZone: TimeZone
+/** Updates health stats in database for automatic syncing to watch */
+internal suspend fun updateHealthStatsInDatabase(
+    healthDao: HealthDao,
+    healthStatDao: HealthStatDao,
+    today: LocalDate,
+    startDate: LocalDate,
+    timeZone: TimeZone
 ): Boolean {
     val averages = calculateHealthAverages(healthDao, startDate, today, timeZone)
     if (averages.rangeDays <= 0) {
@@ -37,31 +39,73 @@ internal suspend fun sendHealthStatsToWatch(
 
     val averageSleepHours = averages.averageSleepSecondsPerDay / 3600.0
 
-    logger.i {
+    logger.d {
         "HEALTH_STATS: 30-day averages window $startDate to $today (range=${averages.rangeDays} days, step days=${averages.stepDaysWithData}, sleep days=${averages.sleepDaysWithData})"
     }
-    logger.i {
+    logger.d {
         "HEALTH_STATS: Average daily steps = ${averages.averageStepsPerDay} (total: ${averages.totalSteps} steps)"
     }
-    logger.i {
+    logger.d {
         val sleepHrs = (averageSleepHours * 10).toInt() / 10.0
         "HEALTH_STATS: Average sleep = ${sleepHrs} hours (${averages.averageSleepSecondsPerDay} seconds, total: ${averages.totalSleepSeconds} seconds)"
     }
 
-    val monthlyStepsSent = sendAverageMonthlySteps(blobDBService, averages.averageStepsPerDay)
-    val monthlySleepSent =
-            sendAverageMonthlySleep(blobDBService, averages.averageSleepSecondsPerDay)
-    val movementSent = sendWeeklyMovementData(healthDao, blobDBService, today, timeZone)
-    val sleepSent = sendWeeklySleepData(healthDao, blobDBService, today, timeZone)
+    val stats = mutableListOf<HealthStat>()
 
-    val sentCount = listOf(monthlyStepsSent, monthlySleepSent, movementSent, sleepSent).count { it }
-    if (sentCount > 0) {
-        logger.i { "HEALTH_STATS: Successfully sent $sentCount stat categories to watch" }
-    } else {
-        logger.w { "HEALTH_STATS: Failed to send any stats to watch" }
+    // Add average stats
+    stats.add(HealthStat(
+        key = KEY_AVERAGE_DAILY_STEPS,
+        payload = encodeUInt(averages.averageStepsPerDay.coerceAtLeast(0).toUInt()).toByteArray()
+    ))
+    stats.add(HealthStat(
+        key = KEY_AVERAGE_SLEEP_DURATION,
+        payload = encodeUInt(averages.averageSleepSecondsPerDay.coerceAtLeast(0).toUInt()).toByteArray()
+    ))
+
+    // Compute weekly movement and sleep data
+    val oldestDate = today.minus(DatePeriod(days = MOVEMENT_HISTORY_DAYS - 1))
+    val rangeStart = oldestDate.startOfDayEpochSeconds(timeZone)
+    val rangeEnd = today.plus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone)
+    val allAggregates = healthDao.getDailyMovementAggregates(rangeStart, rangeEnd)
+    val aggregatesByDayStart =
+        allAggregates.associateBy {
+            LocalDate.parse(it.day).atStartOfDayIn(timeZone).epochSeconds
+        }
+
+    repeat(MOVEMENT_HISTORY_DAYS) { offset ->
+        val day = today.minus(DatePeriod(days = offset))
+        val dayStart = day.startOfDayEpochSeconds(timeZone)
+        val movementKey = MOVEMENT_KEYS[day.dayOfWeek] ?: return@repeat
+        val sleepKey = SLEEP_KEYS[day.dayOfWeek] ?: return@repeat
+
+        // Add movement stat
+        val aggregate = aggregatesByDayStart[dayStart]
+        val movementPayloadData = movementPayload(dayStart, aggregate?.toHealthAggregates())
+        stats.add(HealthStat(
+            key = movementKey,
+            payload = movementPayloadData.toByteArray()
+        ))
+
+        // Add sleep stat
+        val mainSleep = fetchAndGroupDailySleep(healthDao, dayStart, timeZone)
+        val sleepPayloadData = sleepPayload(
+            dayStart,
+            mainSleep?.totalSleep?.toInt() ?: 0,
+            mainSleep?.deepSleep?.toInt() ?: 0,
+            mainSleep?.start?.toInt() ?: 0,
+            mainSleep?.end?.toInt() ?: 0
+        )
+        stats.add(HealthStat(
+            key = sleepKey,
+            payload = sleepPayloadData.toByteArray()
+        ))
     }
 
-    return monthlyStepsSent || monthlySleepSent || movementSent || sleepSent
+    // Batch insert all stats
+    healthStatDao.insertOrReplace(stats)
+    logger.d { "HEALTH_STATS: Updated ${stats.size} stats in database for automatic syncing" }
+
+    return true
 }
 
 /** Sends weekly movement data (steps, calories, distance, active time) for the last 7 days */
