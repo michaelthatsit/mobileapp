@@ -38,6 +38,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
+private val logger = Logger.withTag("HealthStatsDialog")
+
 @Composable
 fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
     val scope = rememberCoroutineScope()
@@ -48,12 +50,6 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
         scope.launch {
             try {
                 isRefreshing = true
-
-                // Clean duplicates first
-                Logger.i("HealthStatsDialog") { "Cleaning duplicate sleep entries..." }
-                libPebble.forceHealthDataOverwrite()
-                delay(500) // Give it time to complete
-
                 // Pull latest data from watch
                 libPebble.requestHealthData(fullSync = false)
 

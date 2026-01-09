@@ -26,6 +26,7 @@ import io.rebble.libpebblecommon.connection.Negotiator
 import io.rebble.libpebblecommon.connection.NotificationApps
 import io.rebble.libpebblecommon.connection.PebbleBleIdentifier
 import io.rebble.libpebblecommon.connection.PebbleConnector
+import io.rebble.libpebblecommon.connection.PebbleDevice
 import io.rebble.libpebblecommon.connection.PebbleDeviceFactory
 import io.rebble.libpebblecommon.connection.PebbleIdentifier
 import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
@@ -396,6 +397,7 @@ fun initKoin(
                 singleOf(::FirmwareDownloader)
                 singleOf(::JsTokenUtil)
                 singleOf(::Datalogging)
+                single<StateFlow<List<PebbleDevice>>> { get<WatchManager>().watches }
                 singleOf(::Health)
                 singleOf(::ErrorTracker)
                 singleOf(::RealConnectionFailureHandler) bind ConnectionFailureHandler::class

@@ -113,7 +113,7 @@ class HealthService(
 
         // Trigger smart sync when watch connects/is selected
         scope.launch {
-            logger.i { "HEALTH_SERVICE: Watch connected - performing smart reconciliation" }
+            logger.d { "HEALTH_SERVICE: Watch connected - performing smart reconciliation" }
             reconcileWatchWithDatabase()
         }
     }
@@ -129,7 +129,7 @@ class HealthService(
 
     /** Manually push the latest averaged health stats to the connected watch. */
     override suspend fun sendHealthAveragesToWatch() {
-        logger.i { "HEALTH_STATS: Manual health averages send requested" }
+        logger.d { "HEALTH_STATS: Manual health averages send requested" }
         updateHealthStats()
         lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
     }
@@ -140,7 +140,7 @@ class HealthService(
         val now = System.now().toEpochMilliseconds()
         val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60 * 60_000L)
 
-        logger.i {
+        logger.d {
             "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)"
         }
 
@@ -148,7 +148,7 @@ class HealthService(
             // Temporarily reject all health data during reconciliation to prevent stale data from
             // idle watches
             acceptHealthData.value = false
-            logger.i {
+            logger.d {
                 "HEALTH_SYNC: Blocking all health data during reconciliation - phone DB is source of truth"
             }
 
@@ -158,7 +158,7 @@ class HealthService(
             val newDataArrived = waitForNewerHealthData(baselineTimestamp)
 
             if (newDataArrived) {
-                logger.i { "HEALTH_SYNC: Reconciliation complete - data pulled from watch" }
+                logger.d { "HEALTH_SYNC: Reconciliation complete - data pulled from watch" }
                 // Wait to ensure all async database writes complete before we read back for stats
                 delay(RECONCILE_DELAY_MS)
             }
@@ -171,7 +171,7 @@ class HealthService(
         // This overwrites the watch with our phone database
         // Throttle to avoid excessive updates if connection drops/reconnects frequently
         if (hoursSinceLastFullUpdate >= FULL_STATS_THROTTLE_HOURS) {
-            logger.i {
+            logger.d {
                 "HEALTH_SYNC: Pushing phone database to watch (treating as new/switched watch)"
             }
             // Reset today's update flag so it can be updated again if needed
@@ -183,7 +183,7 @@ class HealthService(
             val today = System.now().toLocalDateTime(timeZone).date
             lastTodayUpdateDate.value = today
         } else {
-            logger.i {
+            logger.d {
                 "HEALTH_SYNC: Skipping full stats push - recently updated ${hoursSinceLastFullUpdate}h ago (prevents reconnection spam)"
             }
         }
@@ -192,7 +192,7 @@ class HealthService(
     private suspend fun sendHealthDataRequest(fullSync: Boolean) {
         val packet =
                 if (fullSync) {
-                    logger.i { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
+                    logger.d { "HEALTH_SERVICE: Requesting FULL health data sync from watch" }
                     HealthSyncOutgoingPacket.RequestFirstSync(
                             System.now().epochSeconds.toUInt()
                     )
@@ -206,7 +206,7 @@ class HealthService(
                                 0
                             }
 
-                    logger.i {
+                    logger.d {
                         "HEALTH_SERVICE: Requesting incremental health data sync (last ${timeSinceLastSync}s)"
                     }
                     HealthSyncOutgoingPacket.RequestSync(timeSinceLastSync.toUInt())
@@ -258,7 +258,7 @@ class HealthService(
     }
 
     private fun handleHealthSyncRequest(packet: HealthSyncIncomingPacket) {
-        logger.i {
+        logger.d {
             "HEALTH_SYNC: Watch requested health sync (payload=${packet.payload.size} bytes)"
         }
         scope.launch { sendHealthDataRequest(fullSync = false) }
@@ -302,7 +302,7 @@ class HealthService(
 
                 // Only update if it's been at least 24 hours since last update
                 if (hoursSinceLastUpdate >= 24) {
-                    logger.i {
+                    logger.d {
                         "HEALTH_STATS: Running scheduled daily stats update (${hoursSinceLastUpdate}h since last)"
                     }
                     updateHealthStats()
@@ -320,7 +320,7 @@ class HealthService(
         val applicationUuid = packet.applicationUUID.get()
         val itemSize = packet.dataItemSize.get()
         healthSessions[sessionId] = HealthSession(tag, applicationUuid, itemSize)
-        logger.i {
+        logger.d {
             "HEALTH_SESSION: Opened session $sessionId for ${tagName(tag)} (tag=$tag, itemSize=$itemSize bytes)"
         }
     }
@@ -350,7 +350,7 @@ class HealthService(
         scope.launch {
             val summary = processHealthData(session, payload)
 
-            logger.i {
+            logger.d {
                 buildString {
                     append(
                             "HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, "
@@ -391,7 +391,7 @@ class HealthService(
     private fun handleSessionClose(packet: DataLoggingIncomingPacket.CloseSession) {
         val sessionId = packet.sessionId.get()
         healthSessions.remove(sessionId)?.let { session ->
-            logger.i { "HEALTH_SESSION: Closed session $sessionId for ${tagName(session.tag)}" }
+            logger.d { "HEALTH_SESSION: Closed session $sessionId for ${tagName(session.tag)}" }
         }
     }
 
@@ -433,11 +433,12 @@ class HealthService(
 
     private suspend fun processStepsData(payload: ByteArray, itemSize: UShort): String? {
         val records = parseStepsData(payload, itemSize)
+        logger.i { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
         if (records.isEmpty()) return null
 
         // Drop all data if we're blocking during reconciliation
         if (!acceptHealthData.value) {
-            logger.i { "HEALTH_DATA: Dropped ${records.size} step records during reconciliation" }
+            logger.d { "HEALTH_DATA: Dropped ${records.size} step records during reconciliation" }
             return "dropped ${records.size} records"
         }
 
@@ -460,8 +461,9 @@ class HealthService(
         val firstTs = records.firstOrNull()?.timestamp
         val lastTs = records.lastOrNull()?.timestamp
 
+        logger.i { "HEALTH_DATA: About to insert ${records.size} records with $totalSteps steps" }
         healthDao.insertHealthDataWithPriority(records)
-        logger.d { "HEALTH_DATA: Inserted ${records.size} health records into database" }
+        logger.i { "HEALTH_DATA: Successfully inserted ${records.size} health records into database" }
 
         val distKm = (totalDistanceKm * 100).toInt() / 100.0
         return "records=${records.size}, steps=$totalSteps, $hrSummary, range=$firstTs-$lastTs"
@@ -473,7 +475,7 @@ class HealthService(
 
         // Drop all data if we're blocking during reconciliation
         if (!acceptHealthData.value) {
-            logger.i {
+            logger.d {
                 "HEALTH_DATA: Dropped ${allRecords.size} overlay records during reconciliation"
             }
             return "dropped ${allRecords.size} records"
@@ -528,7 +530,7 @@ class HealthService(
         if (!updated) {
             logger.d { "Health stats update attempt finished without any writes" }
         } else {
-            logger.i { "Health stats updated (latestTimestamp=$latestTimestamp)" }
+            logger.d { "Health stats updated (latestTimestamp=$latestTimestamp)" }
         }
     }
 
