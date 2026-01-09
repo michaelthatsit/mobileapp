@@ -1,8 +1,9 @@
 package io.rebble.libpebblecommon.health
 
 import co.touchlab.kermit.Logger
+import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import io.rebble.libpebblecommon.connection.HealthApi
-import io.rebble.libpebblecommon.connection.PebbleDevice
+import io.rebble.libpebblecommon.connection.WatchManager
 import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.entity.HealthGender
 import io.rebble.libpebblecommon.database.entity.WatchSettingsDao
@@ -11,10 +12,8 @@ import io.rebble.libpebblecommon.database.entity.setWatchSettings
 import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import io.rebble.libpebblecommon.services.calculateHealthAverages
 import io.rebble.libpebblecommon.services.fetchAndGroupDailySleep
-import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -31,7 +30,7 @@ class Health(
     private val watchSettingsDao: WatchSettingsDao,
     private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
     private val healthDao: HealthDao,
-    private val watches: StateFlow<List<PebbleDevice>>,
+    private val watchManager: WatchManager,
 ) : HealthApi {
     private val logger = Logger.withTag("Health")
 
@@ -39,7 +38,7 @@ class Health(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override val healthUpdateFlow: Flow<Unit> =
-        watches.flatMapLatest { devices ->
+        watchManager.watches.flatMapLatest { devices ->
             val device = devices.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
             device?.let {
                 // Access the health service through the connected device
@@ -96,14 +95,14 @@ class Health(
 
     override fun requestHealthData(fullSync: Boolean) {
         libPebbleCoroutineScope.launch {
-            val device = watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
+            val device = watchManager.watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
             device?.requestHealthData(fullSync)
         }
     }
 
     override fun sendHealthAveragesToWatch() {
         libPebbleCoroutineScope.launch {
-            val device = watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
+            val device = watchManager.watches.value.filterIsInstance<ConnectedPebbleDevice>().firstOrNull()
             device?.sendHealthAveragesToWatch()
         }
     }
