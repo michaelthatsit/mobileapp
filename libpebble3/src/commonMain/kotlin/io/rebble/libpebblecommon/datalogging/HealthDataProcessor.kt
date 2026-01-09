@@ -11,7 +11,9 @@ import io.rebble.libpebblecommon.health.parsers.parseOverlayData
 import io.rebble.libpebblecommon.health.parsers.parseStepsData
 import io.rebble.libpebblecommon.services.app.AppRunStateService
 import io.rebble.libpebblecommon.services.updateHealthStatsInDatabase
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -43,9 +45,9 @@ class HealthDataProcessor(
     private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null)
     private val lastTodayUpdateTime = MutableStateFlow(0L)
     private val lastDataReceptionTime = MutableStateFlow(0L)
-    private val _acceptHealthData = MutableStateFlow(true)
+    private val _healthDataUpdated = MutableSharedFlow<Unit>(replay = 0)
 
-    val acceptHealthData: StateFlow<Boolean> = _acceptHealthData
+    val healthDataUpdated: SharedFlow<Unit> = _healthDataUpdated
 
     companion object {
         private const val HEALTH_STEPS_TAG: UInt = 81u
@@ -71,9 +73,6 @@ class HealthDataProcessor(
         }
     }
 
-    fun setAcceptHealthData(accept: Boolean) {
-        _acceptHealthData.value = accept
-    }
 
     fun handleSessionOpen(sessionId: UByte, tag: UInt, applicationUuid: Uuid, itemSize: UShort) {
         if (tag !in HEALTH_TAGS) return
@@ -190,12 +189,6 @@ class HealthDataProcessor(
         logger.d { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
         if (records.isEmpty()) return null
 
-        // Drop all data if we're blocking during reconciliation
-        if (!acceptHealthData.value) {
-            logger.d { "HEALTH_DATA: Dropped ${records.size} step records during reconciliation" }
-            return "dropped ${records.size} records"
-        }
-
         val totalSteps = records.sumOf { it.steps }
         val totalActiveKcal = records.sumOf { it.activeGramCalories } / 1000
         val totalRestingKcal = records.sumOf { it.restingGramCalories } / 1000
@@ -217,6 +210,7 @@ class HealthDataProcessor(
         }
 
         healthDao.insertHealthDataWithPriority(records)
+        _healthDataUpdated.emit(Unit)
 
         return "${records.size} records (${totalSteps} steps)"
     }
@@ -226,13 +220,8 @@ class HealthDataProcessor(
         logger.d { "HEALTH_DATA: Parsed ${records.size} overlay records from payload" }
         if (records.isEmpty()) return null
 
-        // Drop all data if we're blocking during reconciliation
-        if (!acceptHealthData.value) {
-            logger.d { "HEALTH_DATA: Dropped ${records.size} overlay records during reconciliation" }
-            return "dropped ${records.size} records"
-        }
-
         healthDao.insertOverlayDataWithDeduplication(records)
+        _healthDataUpdated.emit(Unit)
 
         val totalDurationHours = records.sumOf { it.duration } / 3600.0
         return "${records.size} overlay records (${totalDurationHours.format(1)}h total)"

@@ -88,6 +88,13 @@ class HealthService(
         listenForHealthUpdates()
         startPeriodicStatsUpdate()
 
+        // Forward health data updates from HealthDataProcessor to our own flow
+        scope.launch {
+            healthDataProcessor.healthDataUpdated.collect {
+                _healthUpdateFlow.emit(Unit)
+            }
+        }
+
         // Trigger smart sync when watch connects/is selected
         scope.launch {
             logger.d { "HEALTH_SERVICE: Watch connected - performing smart reconciliation" }
@@ -121,27 +128,15 @@ class HealthService(
             "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)"
         }
 
-        try {
-            // Temporarily reject all health data during reconciliation to prevent stale data from
-            // idle watches
-            healthDataProcessor.setAcceptHealthData(false)
-            logger.d {
-                "HEALTH_SYNC: Blocking all health data during reconciliation - phone DB is source of truth"
-            }
+        // Request health data from the watch
+        // On first sync (empty database), request all historical data from the watch
+        sendHealthDataRequest(fullSync = isFirstSync)
+        val newDataArrived = waitForNewerHealthData(baselineTimestamp)
 
-            // Request health data from the watch (will be filtered during reconciliation)
-            // On first sync (empty database), request all historical data from the watch
-            sendHealthDataRequest(fullSync = isFirstSync)
-            val newDataArrived = waitForNewerHealthData(baselineTimestamp)
-
-            if (newDataArrived) {
-                logger.d { "HEALTH_SYNC: Reconciliation complete - data pulled from watch" }
-                // Wait to ensure all async database writes complete before we read back for stats
-                delay(RECONCILE_DELAY_MS)
-            }
-        } finally {
-            // Re-enable health data acceptance after reconciliation
-            healthDataProcessor.setAcceptHealthData(true)
+        if (newDataArrived) {
+            logger.d { "HEALTH_SYNC: Reconciliation complete - data pulled from watch" }
+            // Wait to ensure all async database writes complete before we read back for stats
+            delay(RECONCILE_DELAY_MS)
         }
 
         // Push full stats to watch on connection (assume watch may have switched or been reset)
