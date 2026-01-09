@@ -3,15 +3,21 @@ package io.rebble.libpebblecommon.services
 /**
  * Health statistics computation and database storage.
  *
- * Computes 16 health statistics (weekly movement/sleep + averages) and stores them
- * in the HealthStat Room entity. The @GenerateRoomEntity infrastructure automatically
- * syncs these stats to the watch via BlobDB.
+ * Computes health statistics and stores them in the HealthStat Room entity.
+ * The @GenerateRoomEntity infrastructure automatically syncs these stats to the watch via BlobDB.
+ *
+ * Stats sent to watch:
+ * - 2 averages: average daily steps, average sleep duration (30-day window)
+ * - 6 completed days: yesterday through 6 days ago (movement + sleep per day = 12 stats)
+ *
+ * TODAY's data is intentionally NOT sent to avoid conflicts with the watch's real-time
+ * step counting. The day-of-week keys (monday_movementData, etc.) would cause the watch
+ * to treat today's incomplete count as the final value, stopping step accumulation.
  *
  * This replaces the old direct BlobDB sending approach with a declarative Room-based pattern.
  */
 
 import co.touchlab.kermit.Logger
-import coredev.BlobDatabase
 import io.rebble.libpebblecommon.database.dao.DailyMovementAggregate
 import io.rebble.libpebblecommon.database.dao.HealthAggregates
 import io.rebble.libpebblecommon.database.dao.HealthDao
@@ -19,7 +25,6 @@ import io.rebble.libpebblecommon.database.entity.HealthStat
 import io.rebble.libpebblecommon.database.entity.HealthStatDao
 import io.rebble.libpebblecommon.util.DataBuffer
 import io.rebble.libpebblecommon.util.Endian
-import kotlin.random.Random
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -69,7 +74,7 @@ internal suspend fun updateHealthStatsInDatabase(
         payload = encodeUInt(averages.averageSleepSecondsPerDay.coerceAtLeast(0).toUInt()).toByteArray()
     ))
 
-    // Compute weekly movement and sleep data
+    // Compute weekly movement and sleep data (excluding today)
     val oldestDate = today.minus(DatePeriod(days = MOVEMENT_HISTORY_DAYS - 1))
     val rangeStart = oldestDate.startOfDayEpochSeconds(timeZone)
     val rangeEnd = today.plus(DatePeriod(days = 1)).startOfDayEpochSeconds(timeZone)
@@ -79,7 +84,9 @@ internal suspend fun updateHealthStatsInDatabase(
             LocalDate.parse(it.day).atStartOfDayIn(timeZone).epochSeconds
         }
 
-    repeat(MOVEMENT_HISTORY_DAYS) { offset ->
+    // Send last 6 completed days (offset 1-6), skipping today (offset 0)
+    repeat(MOVEMENT_HISTORY_DAYS - 1) { index ->
+        val offset = index + 1  // Start from 1 (yesterday) instead of 0 (today)
         val day = today.minus(DatePeriod(days = offset))
         val dayStart = day.startOfDayEpochSeconds(timeZone)
         val movementKey = MOVEMENT_KEYS[day.dayOfWeek] ?: return@repeat
@@ -187,8 +194,6 @@ private fun encodeUInt(value: UInt): UByteArray {
 }
 
 private fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long = this.atStartOfDayIn(timeZone).epochSeconds
-
-private fun randomToken(): UShort = Random.nextInt(0, UShort.MAX_VALUE.toInt()).toUShort()
 
 private fun DailyMovementAggregate.toHealthAggregates(): HealthAggregates =
     HealthAggregates(
