@@ -396,6 +396,15 @@ private fun LocalDate.startOfDayEpochSeconds(timeZone: TimeZone): Long =
 
 private fun randomToken(): UShort = Random.nextInt(0, UShort.MAX_VALUE.toInt()).toUShort()
 
+private fun DailyMovementAggregate.toHealthAggregates(): HealthAggregates =
+    HealthAggregates(
+        steps = this.steps,
+        activeGramCalories = this.activeGramCalories,
+        restingGramCalories = this.restingGramCalories,
+        activeMinutes = this.activeMinutes,
+        distanceCm = this.distanceCm
+    )
+
 // Constants
 private const val MOVEMENT_HISTORY_DAYS = 7
 private const val HEALTH_STATS_BLOB_TIMEOUT_MS = 5_000L
