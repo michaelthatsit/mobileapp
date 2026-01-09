@@ -67,17 +67,10 @@ class HealthService(
     private val healthStatDao: HealthStatDao,
     private val healthDataProcessor: HealthDataProcessor,
 ) : ProtocolService, Health {
-    private val lastFullStatsUpdate = MutableStateFlow(0L) // Epoch millis of last full stats push
-
     companion object {
         private val logger = Logger.withTag("HealthService")
 
-        private val TWENTY_FOUR_HOURS_MS = 1.days.inWholeMilliseconds
         private const val HEALTH_STATS_AVERAGE_DAYS = 30
-        private val HEALTH_SYNC_WAIT_MS = 8.seconds.inWholeMilliseconds
-        private const val HEALTH_SYNC_POLL_MS = 1000L
-        private const val RECONCILE_DELAY_MS = 1000L
-        private const val FULL_STATS_THROTTLE_HOURS = 12L
         private const val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
     }
 
@@ -94,12 +87,6 @@ class HealthService(
                 _healthUpdateFlow.emit(Unit)
             }
         }
-
-        // Trigger smart sync when watch connects/is selected
-        scope.launch {
-            logger.d { "HEALTH_SERVICE: Watch connected - performing smart reconciliation" }
-            reconcileWatchWithDatabase()
-        }
     }
 
     /**
@@ -115,45 +102,8 @@ class HealthService(
     override suspend fun sendHealthAveragesToWatch() {
         logger.d { "HEALTH_STATS: Manual health averages send requested" }
         updateHealthStats()
-        lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
     }
 
-    private suspend fun reconcileWatchWithDatabase() {
-        val baselineTimestamp = healthDao.getLatestTimestamp() ?: 0L
-        val isFirstSync = baselineTimestamp == 0L
-        val now = System.now().toEpochMilliseconds()
-        val hoursSinceLastFullUpdate = (now - lastFullStatsUpdate.value) / (60.minutes.inWholeMilliseconds)
-
-        logger.d {
-            "HEALTH_SYNC: Reconciling on connection (baseline=$baselineTimestamp, isFirstSync=$isFirstSync, hoursSinceLastFullUpdate=$hoursSinceLastFullUpdate)"
-        }
-
-        // Request health data from the watch
-        // On first sync (empty database), request all historical data from the watch
-        sendHealthDataRequest(fullSync = isFirstSync)
-        val newDataArrived = waitForNewerHealthData(baselineTimestamp)
-
-        if (newDataArrived) {
-            logger.d { "HEALTH_SYNC: Reconciliation complete - data pulled from watch" }
-            // Wait to ensure all async database writes complete before we read back for stats
-            delay(RECONCILE_DELAY_MS)
-        }
-
-        // Push full stats to watch on connection (assume watch may have switched or been reset)
-        // This overwrites the watch with our phone database
-        // Throttle to avoid excessive updates if connection drops/reconnects frequently
-        if (hoursSinceLastFullUpdate >= FULL_STATS_THROTTLE_HOURS) {
-            logger.d {
-                "HEALTH_SYNC: Pushing phone database to watch (treating as new/switched watch)"
-            }
-            updateHealthStats()
-            lastFullStatsUpdate.value = now
-        } else {
-            logger.d {
-                "HEALTH_SYNC: Skipping full stats push - recently updated ${hoursSinceLastFullUpdate}h ago (prevents reconnection spam)"
-            }
-        }
-    }
 
     private suspend fun sendHealthDataRequest(fullSync: Boolean) {
         val packet =
@@ -180,26 +130,6 @@ class HealthService(
         protocolHandler.send(packet)
     }
 
-    private suspend fun waitForNewerHealthData(previousLatest: Long): Boolean {
-        val baseline = previousLatest.coerceAtLeast(0L)
-        return withTimeoutOrNull(HEALTH_SYNC_WAIT_MS) {
-            while (true) {
-                delay(HEALTH_SYNC_POLL_MS)
-                val latest = healthDao.getLatestTimestamp() ?: 0L
-
-                val hasNewer =
-                    if (baseline == 0L) {
-                        latest > 0L
-                    } else {
-                        latest > baseline
-                    }
-
-                if (hasNewer) return@withTimeoutOrNull true
-            }
-            false
-        }
-                ?: false
-    }
 
     private fun listenForHealthUpdates() {
         protocolHandler
@@ -221,19 +151,12 @@ class HealthService(
 
     private fun startPeriodicStatsUpdate() {
         scope.launch {
-            // Update health stats once daily, preferably in the morning
+            // Update health stats once daily at 7 AM
             while (true) {
                 val timeZone = TimeZone.currentSystemDefault()
                 val now = System.now().toLocalDateTime(timeZone)
-                val lastUpdateTime = lastFullStatsUpdate.value
-                val hoursSinceLastUpdate =
-                    if (lastUpdateTime > 0) {
-                        (System.now().toEpochMilliseconds() - lastUpdateTime) / (60.minutes.inWholeMilliseconds)
-                    } else {
-                        24L
-                    }
 
-                // Calculate next morning update time (7 AM)
+                // Calculate next morning update time (7 AM tomorrow)
                 val tomorrow = now.date.plus(DatePeriod(days = 1))
                 val nextMorning =
                         LocalDateTime(
@@ -247,18 +170,11 @@ class HealthService(
                 val morningInstant = nextMorning.toInstant(timeZone)
                 val delayUntilMorning = (morningInstant.toEpochMilliseconds() - System.now().toEpochMilliseconds()).coerceAtLeast(0L)
 
-                // Wait until morning or 24 hours, whichever comes first
-                val delayTime = minOf(delayUntilMorning, TWENTY_FOUR_HOURS_MS)
-                delay(delayTime)
+                logger.d { "HEALTH_STATS: Next scheduled update at $nextMorning (${delayUntilMorning / (60 * 60 * 1000)}h from now)" }
+                delay(delayUntilMorning)
 
-                // Only update if it's been at least 24 hours since last update
-                if (hoursSinceLastUpdate >= 24) {
-                    logger.d {
-                        "HEALTH_STATS: Running scheduled daily stats update (${hoursSinceLastUpdate}h since last)"
-                    }
-                    updateHealthStats()
-                    lastFullStatsUpdate.value = System.now().toEpochMilliseconds()
-                }
+                logger.d { "HEALTH_STATS: Running scheduled daily stats update" }
+                updateHealthStats()
             }
         }
     }
