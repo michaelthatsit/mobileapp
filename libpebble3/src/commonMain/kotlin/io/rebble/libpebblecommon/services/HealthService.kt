@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import io.rebble.libpebblecommon.SystemAppIDs.SYSTEM_APP_UUID
 import io.rebble.libpebblecommon.connection.PebbleProtocolHandler
 import io.rebble.libpebblecommon.database.dao.HealthDao
+import io.rebble.libpebblecommon.database.entity.HealthStatDao
 import io.rebble.libpebblecommon.database.dao.insertHealthDataWithPriority
 import io.rebble.libpebblecommon.database.dao.insertOverlayDataWithDeduplication
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
@@ -67,6 +68,7 @@ class HealthService(
         private val healthDao: HealthDao,
         private val appRunStateService: AppRunStateService,
         private val blobDBService: BlobDBService,
+        private val healthStatDao: HealthStatDao,
 ) : ProtocolService, io.rebble.libpebblecommon.connection.ConnectedPebble.Health {
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
     private val isAppOpen = MutableStateFlow(false)
@@ -375,8 +377,8 @@ class HealthService(
                     logger.d {
                         "HEALTH_DATA: Received new data, updating today's movement and recent sleep data (last update ${timeSinceLastUpdate / 60_000}min ago)"
                     }
-                    sendTodayMovementData(healthDao, blobDBService, today, timeZone)
-                    sendRecentSleepData(healthDao, blobDBService, today, timeZone)
+                    // Today's data is included in the weekly update, no separate call needed
+                    updateHealthStatsInDatabase(healthDao, healthStatDao, today, today.minus(DatePeriod(days = 29)), timeZone)
                     lastTodayUpdateDate.value = today
                     lastTodayUpdateTime.value = now
                 } else {
@@ -522,7 +524,7 @@ class HealthService(
         val today = kotlin.time.Clock.System.now().toLocalDateTime(timeZone).date
         val startDate = today.minus(DatePeriod(days = HEALTH_STATS_AVERAGE_DAYS))
 
-        val updated = sendHealthStatsToWatch(healthDao, blobDBService, today, startDate, timeZone)
+        val updated = updateHealthStatsInDatabase(healthDao, healthStatDao, today, startDate, timeZone)
         if (!updated) {
             logger.d { "Health stats update attempt finished without any writes" }
         } else {

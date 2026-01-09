@@ -107,9 +107,7 @@ abstract class Database : RoomDatabase() {
     abstract fun contactDao(): ContactDao
     abstract fun vibePatternDao(): VibePatternDao
     abstract fun healthDao(): HealthDao
-
-    @Database.RealDatabaseComponent
-    fun healthStatDao(): HealthStatDao
+    abstract fun healthStatDao(): HealthStatDao
 }
 
 @Suppress("NO_ACTUAL_FOR_EXPECT")
