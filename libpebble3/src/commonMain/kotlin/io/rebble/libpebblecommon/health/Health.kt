@@ -36,8 +36,8 @@ class Health(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override val healthUpdateFlow: Flow<Unit> =
-            libPebble.connectedOrConnectingDevices.flatMapLatest { devices ->
-                val device = devices.firstOrNull() as? io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
+            libPebble.watches.flatMapLatest { devices ->
+                val device = devices.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
                 device?.let {
                     // Access the health service through the connected device
                     // This returns a flow that emits when health updates occur
@@ -89,14 +89,14 @@ class Health(
 
     override fun requestHealthData(fullSync: Boolean) {
         libPebbleCoroutineScope.launch {
-            val device = libPebble.connectedOrConnectingDevices.value.firstOrNull() as? io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
+            val device = libPebble.watches.value.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
             device?.requestHealthData(fullSync)
         }
     }
 
     override fun sendHealthAveragesToWatch() {
         libPebbleCoroutineScope.launch {
-            val device = libPebble.connectedOrConnectingDevices.value.firstOrNull() as? io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
+            val device = libPebble.watches.value.filterIsInstance<io.rebble.libpebblecommon.connection.ConnectedPebbleDevice>().firstOrNull()
             device?.sendHealthAveragesToWatch()
         }
     }
