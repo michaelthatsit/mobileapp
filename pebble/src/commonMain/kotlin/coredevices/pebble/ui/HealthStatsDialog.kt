@@ -50,8 +50,8 @@ fun HealthStatsDialog(libPebble: LibPebble, onDismissRequest: () -> Unit) {
         scope.launch {
             try {
                 isRefreshing = true
-                // Pull latest data from watch
-                libPebble.requestHealthData(fullSync = false)
+                // Pull ALL data from watch to reconcile any missing steps
+                libPebble.requestHealthData(fullSync = true)
 
                 // Wait for sync update with timeout
                 try {

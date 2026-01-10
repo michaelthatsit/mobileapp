@@ -16,7 +16,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.TimeZone
@@ -43,7 +42,7 @@ class Health(
             device?.let {
                 // Access the health service through the connected device
                 // This returns a flow that emits when health updates occur
-                flowOf(Unit)
+                device.healthUpdateFlow
             } ?: emptyFlow()
         }
 

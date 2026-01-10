@@ -29,6 +29,7 @@ import kotlin.uuid.Uuid
  * and handles session tracking, data parsing, and database storage.
  *
  * All received health data is processed immediately to prevent data loss.
+ * Battery optimization is handled by throttling sync REQUESTS, not data reception.
  */
 class HealthDataProcessor(
     private val scope: ConnectionCoroutineScope,
@@ -63,12 +64,18 @@ class HealthDataProcessor(
     }
 
     fun handleSendDataItems(sessionId: UByte, payload: ByteArray, itemsLeft: UInt) {
-        val session = healthSessions[sessionId] ?: return
+        val session = healthSessions[sessionId]
+        if (session == null) {
+            logger.w { "HEALTH_DATA: handleSendDataItems called but session $sessionId not found in healthSessions map" }
+            return
+        }
 
         val payloadSize = payload.size
+        logger.d { "HEALTH_DATA: handleSendDataItems called (session=$sessionId, ${payloadSize} bytes, $itemsLeft items remaining)" }
 
         // Process and store the health data in the database
         scope.launch {
+            logger.d { "HEALTH_DATA: Inside coroutine, about to process health data for session $sessionId" }
             val summary = processHealthData(session, payload)
 
             logger.d {
@@ -150,9 +157,12 @@ class HealthDataProcessor(
     }
 
     private suspend fun processStepsData(payload: ByteArray, itemSize: UShort): String? {
+        logger.d { "HEALTH_DATA: processStepsData called with ${payload.size} byte payload, itemSize=$itemSize" }
         val records = parseStepsData(payload, itemSize)
         logger.d { "HEALTH_DATA: Parsed ${records.size} step records from payload" }
-        if (records.isEmpty()) return null
+        if (records.isEmpty()) {
+            return null
+        }
 
         val totalSteps = records.sumOf { it.steps }
         val totalActiveKcal = records.sumOf { it.activeGramCalories } / 1000
@@ -171,11 +181,13 @@ class HealthDataProcessor(
             } else "no HR"
 
         logger.d {
-            "HEALTH_DATA: Successfully inserted ${records.size} records (steps=$totalSteps, active=${totalActiveKcal}kcal, resting=${totalRestingKcal}kcal, distance=${totalDistanceKm}km, activeMin=$totalActiveMin, $hrSummary)"
+            "HEALTH_DATA: About to insert ${records.size} records into database (steps=$totalSteps, active=${totalActiveKcal}kcal, resting=${totalRestingKcal}kcal, distance=${totalDistanceKm}km, activeMin=$totalActiveMin, $hrSummary)"
         }
 
         healthDao.insertHealthDataWithPriority(records)
+        logger.d { "HEALTH_DATA: Database insertion complete, emitting health update event" }
         _healthDataUpdated.emit(Unit)
+        logger.d { "HEALTH_DATA: Health update event emitted successfully" }
 
         return "${records.size} records (${totalSteps} steps)"
     }

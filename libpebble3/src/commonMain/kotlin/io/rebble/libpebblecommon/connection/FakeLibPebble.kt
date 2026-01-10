@@ -52,6 +52,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -571,6 +572,9 @@ class FakeConnectedDevice(
     override val languagePackInstallState: LanguagePackInstallState =
         LanguagePackInstallState.Idle()
     override val installedLanguagePack: InstalledLanguagePack? = null
+
+    override val healthUpdateFlow: SharedFlow<Unit> = MutableSharedFlow(replay = 0)
+
     override suspend fun requestHealthData(fullSync: Boolean) {
         TODO("Not yet implemented")
     }

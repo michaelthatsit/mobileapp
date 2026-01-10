@@ -70,12 +70,17 @@ class HealthService(
     companion object {
         private val logger = Logger.withTag("HealthService")
 
-        private const val HEALTH_STATS_AVERAGE_DAYS = 30
-        private const val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
+        private val HEALTH_STATS_AVERAGE_DAYS = 30
+        private val MORNING_WAKE_HOUR = 7 // 7 AM for daily stats update
+        private val BACKGROUND_SYNC_THROTTLE_MS = 30.minutes.inWholeMilliseconds // 30 minutes
     }
 
     private val _healthUpdateFlow = MutableSharedFlow<Unit>(replay = 0)
-    val healthUpdateFlow: SharedFlow<Unit> = _healthUpdateFlow
+    override val healthUpdateFlow: SharedFlow<Unit> = _healthUpdateFlow
+
+    private var lastSyncRequestTime = 0L
+    private var lastDataReceivedTime = 0L
+    private var watchAppRunning = false
 
     fun init() {
         listenForHealthUpdates()
@@ -84,7 +89,15 @@ class HealthService(
         // Forward health data updates from HealthDataProcessor to our own flow
         scope.launch {
             healthDataProcessor.healthDataUpdated.collect {
+                lastDataReceivedTime = System.now().toEpochMilliseconds()
                 _healthUpdateFlow.emit(Unit)
+            }
+        }
+
+        // Track app state on watch for sync request throttling
+        scope.launch {
+            appRunStateService.runningApp.collect { runningApp ->
+                watchAppRunning = runningApp != null
             }
         }
     }
@@ -143,9 +156,30 @@ class HealthService(
     }
 
     private fun handleHealthSyncRequest(packet: HealthSyncIncomingPacket) {
-        logger.d {
-            "HEALTH_SYNC: Watch requested health sync (payload=${packet.payload.size} bytes)"
+        val now = System.now().toEpochMilliseconds()
+        val timeSinceLastSync = now - lastSyncRequestTime
+        val timeSinceLastData = now - lastDataReceivedTime
+
+        // Smarter throttling to avoid data loss:
+        // - Always accept if watch app is running (user is actively using watch)
+        // - Always accept if we haven't received data in a while (avoid buffer overflow on watch)
+        // - Otherwise throttle to save battery
+        val shouldThrottle = !watchAppRunning &&
+                           timeSinceLastSync < BACKGROUND_SYNC_THROTTLE_MS &&
+                           timeSinceLastData < BACKGROUND_SYNC_THROTTLE_MS
+
+        if (shouldThrottle) {
+            logger.d {
+                "HEALTH_SYNC: Throttling sync request - watch idle, last sync ${timeSinceLastSync / 60_000}min ago, last data ${timeSinceLastData / 60_000}min ago"
+            }
+            return
         }
+
+        logger.d {
+            "HEALTH_SYNC: Watch requested health sync (payload=${packet.payload.size} bytes, app_running=$watchAppRunning)"
+        }
+
+        lastSyncRequestTime = now
         scope.launch { sendHealthDataRequest(fullSync = false) }
     }
 
