@@ -12,9 +12,11 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import coredevices.database.AppstoreSource
+import coredevices.util.CoreConfigHolder
 import io.rebble.libpebblecommon.locker.AppType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 /**
@@ -83,6 +85,9 @@ object PebbleNavBarRoutes {
     data object NotificationsRoute : NavBarRoute
 
     @Serializable
+    data object IndexRoute : NavBarRoute
+
+    @Serializable
     data class NotificationAppRoute(val packageName: String) : NavBarRoute
 
     @Serializable
@@ -149,7 +154,7 @@ inline fun <reified T : Any> NavGraphBuilder.composableWithAnimations(
 fun NavGraphBuilder.addNavBarRoutes(
     nav: NavBarNav,
     topBarParams: TopBarParams,
-    experimentalRoute: CoreRoute?,
+    indexScreen: @Composable (TopBarParams, NavBarNav) -> Unit,
     viewModel: WatchHomeViewModel,
 ) {
     composableWithAnimations<PebbleNavBarRoutes.AppStoreRoute>(viewModel) {
@@ -191,14 +196,18 @@ fun NavGraphBuilder.addNavBarRoutes(
         )
     }
     composableWithAnimations<PebbleNavBarRoutes.NotificationsRoute>(viewModel) {
-        NotificationsScreen(topBarParams, nav)
+        val coreConfigHolder = koinInject<CoreConfigHolder>()
+        NotificationsScreen(topBarParams, nav, coreConfigHolder.config.value.enableIndex)
+    }
+    composableWithAnimations<PebbleNavBarRoutes.IndexRoute>(viewModel) {
+        indexScreen(topBarParams, nav)
     }
     composableWithAnimations<PebbleNavBarRoutes.NotificationAppRoute>(viewModel) {
         val route: PebbleNavBarRoutes.NotificationAppRoute = it.toRoute()
         NotificationAppScreen(topBarParams, route.packageName, nav)
     }
     composableWithAnimations<PebbleNavBarRoutes.WatchSettingsRoute>(viewModel) {
-        WatchSettingsScreen(nav, topBarParams, experimentalRoute)
+        WatchSettingsScreen(nav, topBarParams)
     }
     composableWithAnimations<PebbleNavBarRoutes.PermissionsRoute>(viewModel) {
         PermissionsScreen(nav, topBarParams)
@@ -242,9 +251,9 @@ fun NavGraphBuilder.addNavBarRoutes(
     }
 }
 
-fun NavGraphBuilder.addPebbleRoutes(coreNav: CoreNav, experimentalRoute: CoreRoute?) {
+fun NavGraphBuilder.addPebbleRoutes(coreNav: CoreNav, indexScreen: @Composable (TopBarParams, NavBarNav) -> Unit) {
     composable<PebbleRoutes.WatchHomeRoute> {
-        WatchHomeScreen(coreNav, experimentalRoute)
+        WatchHomeScreen(coreNav, indexScreen)
     }
     composable<PebbleRoutes.FirmwareSideloadRoute> {
         val route: PebbleRoutes.FirmwareSideloadRoute = it.toRoute()
@@ -263,6 +272,6 @@ fun NavGraphBuilder.addPebbleRoutes(coreNav: CoreNav, experimentalRoute: CoreRou
         )
     }
     composable<PebbleRoutes.AppstoreSettingsRoute> {
-        AppstoreSettingsScreen(coreNav)
+        AppstoreSettingsScreen(coreNav, topBarParams = null)
     }
 }

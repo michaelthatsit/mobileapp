@@ -5,6 +5,7 @@ import coredevices.database.AppstoreSource
 import coredevices.pebble.services.AppstoreService
 import coredevices.pebble.services.RealPebbleWebServices
 import coredevices.pebble.services.toLockerEntry
+import coredevices.pebble.ui.CommonAppType
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.firestore.FieldPath
@@ -14,6 +15,7 @@ import dev.gitlive.firebase.firestore.FirestoreExceptionCode
 import dev.gitlive.firebase.firestore.code
 import io.rebble.libpebblecommon.web.LockerEntry
 import io.rebble.libpebblecommon.web.LockerModel
+import io.rebble.libpebblecommon.web.LockerModelWrapper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -75,7 +77,7 @@ class FirestoreLockerDao(private val firestore: FirebaseFirestore) {
         uuid: Uuid
     ) {
         try {
-            firestore.collection("locker")
+            firestore.collection("lockers")
                 .document(uid)
                 .collection("entries")
                 .where {
@@ -88,33 +90,11 @@ class FirestoreLockerDao(private val firestore: FirebaseFirestore) {
             throw FirestoreDaoException.fromFirebaseException(e)
         }
     }
-
-    suspend fun getLockerEntryForUser(
-        uid: String,
-        appstoreId: String,
-        uuid: Uuid
-    ): FirestoreLockerEntry? {
-        try {
-            val document = firestore.collection("locker")
-                .document(uid)
-                .collection("entries")
-                .document("${appstoreId}-${uuid}")
-                .get()
-            return if (document.exists) {
-                document.data()
-            } else {
-                null
-            }
-        } catch (e: FirebaseFirestoreException) {
-            throw FirestoreDaoException.fromFirebaseException(e)
-        }
-    }
 }
 
 class FirestoreLocker(
     private val dao: FirestoreLockerDao,
 ): KoinComponent {
-    private val scope = CoroutineScope(Dispatchers.Default)
     companion object {
         private val logger = Logger.withTag("FirestoreLocker")
     }
@@ -132,21 +112,15 @@ class FirestoreLocker(
             val firestoreEntry = FirestoreLockerEntry(
                 uuid = Uuid.parse(entry.uuid),
                 appstoreId = entry.id,
-                appstoreSource = equivalentSourceUrl
+                appstoreSource = equivalentSourceUrl,
+                timelineToken = entry.userToken,
             )
             dao.addLockerEntryForUser(user.uid, firestoreEntry)
             emit((i + 1) to size)
         }
     }
 
-    private suspend fun getLockerEntryFromStore(entry: FirestoreLockerEntry, useCache: Boolean = true): LockerEntry? {
-        val appstore: AppstoreService = get { parametersOf(AppstoreSource(url = entry.appstoreSource, title = "")) }
-        val appstoreApp = appstore.fetchAppStoreApp(entry.appstoreId, null, useCache)
-            ?: return null
-        return appstoreApp.toLockerEntry(entry.appstoreSource)
-    }
-
-    suspend fun fetchLocker(forceRefresh: Boolean = false): LockerModel? {
+    suspend fun fetchLocker(forceRefresh: Boolean = false): LockerModelWrapper? {
         val user = Firebase.auth.currentUser ?: return null
         val fsLocker = try {
             dao.getLockerEntriesForUser(user.uid)
@@ -155,34 +129,17 @@ class FirestoreLocker(
             return null
         }
         logger.d { "Fetched ${fsLocker.size} locker UUIDs from Firestore" }
-        val applications = fsLocker.chunked(10).also {
-            logger.d { "Fetching locker entries in ${it.size} chunks" }
-        }.flatMap { lockerEntries ->
-            val result = lockerEntries.map { lockerEntry ->
-                scope.async {
-                    getLockerEntryFromStore(lockerEntry, useCache = !forceRefresh) ?: run {
-                        logger.w { "Failed to fetch locker entry for appstoreId=${lockerEntry.appstoreId}, uuid=${lockerEntry.uuid}" }
-                        null
-                    }
-                }
-            }.awaitAll()
-            if (fsLocker.size > 20) {
-                delay(50)
-            }
-            result
+        val appsBySource = fsLocker.groupBy { it.appstoreSource }
+        val apps = appsBySource.flatMap { (source, entries) ->
+            val appstore: AppstoreService = get { parametersOf(AppstoreSource(url = source, title = "")) }
+            appstore.fetchAppStoreApps(entries, useCache = !forceRefresh)
         }
-        if (applications.all { it == null }) {
-            logger.e { "Failed to fetch any locker entries from appstores" }
-            return null
-        }
-        return try {
-            LockerModel(
-                applications = applications.filterNotNull()
-            )
-        } catch (e: IllegalStateException) {
-            logger.e(e) { "Error fetching locker entries" }
-            null
-        }
+        return LockerModelWrapper(
+            locker = LockerModel(
+                applications = apps
+            ),
+            failedToFetchUuids = fsLocker.map { it.uuid }.toSet().minus(apps.map { Uuid.parse(it.uuid) }.toSet()),
+        )
     }
 
     suspend fun isLockerEmpty(): Boolean {
@@ -190,31 +147,25 @@ class FirestoreLocker(
         return dao.isLockerEntriesEmptyForUser(user.uid)
     }
 
-    suspend fun addApp(id: String, sourceUrl: String): Boolean {
+    suspend fun addApp(entry: CommonAppType.Store, timelineToken: String?): Boolean {
         val user = Firebase.auth.currentUser ?: run {
             logger.e { "No authenticated user" }
             return false
         }
-        val appstore: AppstoreService = get { parametersOf(AppstoreSource(url = sourceUrl, title = "")) }
-        val appstoreApp = appstore.fetchAppStoreApp(id, null, useCache = false)
-            ?: run {
-                logger.e {"Failed to fetch appstore app for id=$id from source=$sourceUrl" }
-                return false
-            }
-        val lockerEntry = appstoreApp.toLockerEntry(sourceUrl) ?: run {
-            logger.e { "Failed to convert appstore app to locker entry for id=$id from source=$sourceUrl" }
+        if (entry.storeApp == null) {
             return false
         }
         val firestoreEntry = FirestoreLockerEntry(
-            uuid = Uuid.parse(lockerEntry.uuid),
-            appstoreId = lockerEntry.id,
-            appstoreSource = sourceUrl
+            uuid = Uuid.parse(entry.storeApp.uuid),
+            appstoreId = entry.storeApp.id,
+            appstoreSource = entry.storeSource.url,
+            timelineToken = timelineToken,
         )
         return try {
             dao.addLockerEntryForUser(user.uid, firestoreEntry)
             true
         } catch (e: FirestoreDaoException) {
-            logger.e(e) { "Error adding locker entry to Firestore for user ${user.uid}, appstoreId=$id: ${e.message}" }
+            logger.e(e) { "Error adding locker entry to Firestore for user ${user.uid}, appstoreId=${entry.storeApp.id}: ${e.message}" }
             false
         }
     }
@@ -256,4 +207,5 @@ data class FirestoreLockerEntry(
     val uuid: Uuid,
     val appstoreId: String,
     val appstoreSource: String,
+    val timelineToken: String?,
 )

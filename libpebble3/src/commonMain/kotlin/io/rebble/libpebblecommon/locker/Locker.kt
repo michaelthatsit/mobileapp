@@ -28,7 +28,7 @@ import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import io.rebble.libpebblecommon.disk.pbw.PbwApp
 import io.rebble.libpebblecommon.disk.pbw.toLockerEntry
 import io.rebble.libpebblecommon.metadata.WatchType
-import io.rebble.libpebblecommon.web.LockerModel
+import io.rebble.libpebblecommon.web.LockerModelWrapper
 import io.rebble.libpebblecommon.web.WebSyncManager
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -73,7 +73,7 @@ class Locker(
 
     companion object {
         private val logger = Logger.withTag("Locker")
-        private val PREF_KEY_HAVE_INSERTED_SYSTEM_APPS_AT_CORRECT_POSITION = "have_inserted_system_apps_at_correct_position"
+        private val PREF_KEY_HAVE_INSERTED_SYSTEM_APPS_AT_CORRECT_POSITION = "have_inserted_system_apps_at_correct_position_v2"
     }
 
     override suspend fun sideloadApp(pbwPath: Path): Boolean =
@@ -183,16 +183,26 @@ class Locker(
         return true
     }
 
+    override suspend fun addAppToLocker(app: io.rebble.libpebblecommon.web.LockerEntry) {
+        val orderIndex = orderIndexForInsert(AppType.fromString(app.type) ?: AppType.Watchface)
+        lockerEntryDao.insertOrReplaceAndOrder(app.asEntity(orderIndex), config.value.lockerSyncLimit)
+    }
+
     suspend fun getApp(uuid: Uuid): LockerEntry? = lockerEntryDao.getEntry(uuid)
 
-    suspend fun update(locker: LockerModel) {
-        logger.d("update: ${locker.applications.size}")
+    private fun orderIndexForInsert(type: AppType) = when (type) {
+        AppType.Watchface -> -1
+        AppType.Watchapp -> SystemApps.entries.size
+    }
+
+    suspend fun update(locker: LockerModelWrapper) {
+        logger.d("update: ${locker.locker.applications.size}")
         val existingApps = lockerEntryDao.getAll().associateBy { it.id }.toMutableMap()
-        val toInsert = locker.applications.mapNotNull { new ->
-            val newEntity = new.asEntity()
+        val toInsert = locker.locker.applications.mapNotNull { new ->
+            val newEntity = new.asEntity(orderIndexForInsert(AppType.fromString(new.type) ?: AppType.Watchface))
             val existing = existingApps.remove(newEntity.id)
             if (existing == null) {
-                new.asEntity()
+                newEntity
             } else {
                 val newWithExistingOrder = newEntity.copy(orderIndex = existing.orderIndex)
                 if (newWithExistingOrder != existing && !existing.sideloaded) {
@@ -204,8 +214,15 @@ class Locker(
         }
         logger.d { "inserting: ${toInsert.map { "${it.id} / ${it.title}" }}" }
         lockerEntryDao.insertOrReplaceAndOrder(toInsert, config.value.lockerSyncLimit)
+        logger.v { "Failed to fetch: ${locker.failedToFetchUuids}" }
         val toDelete = existingApps.mapNotNull {
-            if (!it.value.sideloaded && !it.value.systemApp) it.key else null
+            when {
+                it.value.sideloaded -> null
+                it.value.systemApp -> null
+                // Don't delete from locker if we just failed to fetch updated version
+                it.key in locker.failedToFetchUuids -> null
+                else -> it.key
+            }
         }
         logger.d { "deleting: $toDelete" }
         lockerEntryDao.markAllForDeletion(toDelete)
@@ -219,7 +236,8 @@ class Locker(
      */
     suspend fun sideloadApp(pbwApp: PbwApp, loadOnWatch: Boolean): Boolean {
         logger.d { "Sideloading app ${pbwApp.info.longName}" }
-        val lockerEntry = pbwApp.toLockerEntry(clock.now())
+        val type = if (pbwApp.info.watchapp.watchface) AppType.Watchface else AppType.Watchapp
+        val lockerEntry = pbwApp.toLockerEntry(clock.now(), orderIndexForInsert(type))
         pbwApp.source().buffered().use {
             lockerPBWCache.addPBWFileForApp(lockerEntry.id, pbwApp.info.versionLabel, it)
         }
@@ -347,7 +365,7 @@ fun LockerEntry.wrap(config: WatchConfigFlow): LockerWrapper.NormalApp? {
 
 fun findSystemApp(uuid: Uuid): SystemApps? = SystemApps.entries.find { it.uuid == uuid }
 
-fun io.rebble.libpebblecommon.web.LockerEntry.asEntity(): LockerEntry {
+fun io.rebble.libpebblecommon.web.LockerEntry.asEntity(orderIndex: Int): LockerEntry {
     val uuid = Uuid.parse(uuid)
     return LockerEntry(
         id = uuid,
@@ -401,7 +419,7 @@ fun io.rebble.libpebblecommon.web.LockerEntry.asEntity(): LockerEntry {
                 pebblekitVersion = it.pebblekitVersion,
             )
         },
-        orderIndex = -1,
+        orderIndex = orderIndex,
     )
 }
 

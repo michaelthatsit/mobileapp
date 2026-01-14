@@ -3,7 +3,6 @@ package coredevices.pebble.ui
 import AppUpdateTracker
 import CommonRoutes
 import CoreAppVersion
-import CoreRoute
 import NextBugReportContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -45,6 +45,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,7 +77,6 @@ import coredevices.pebble.account.BootConfigProvider
 import coredevices.pebble.account.FirestoreLocker
 import coredevices.pebble.account.PebbleAccount
 import coredevices.pebble.rememberLibPebble
-import coredevices.pebble.services.RealPebbleWebServices
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_FIREBASE_UPLOADS
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_MEMFAULT_UPLOADS
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_MIXPANEL_UPLOADS
@@ -84,13 +85,16 @@ import coredevices.ui.M3Dialog
 import coredevices.ui.ModelDownloadDialog
 import coredevices.ui.ModelType
 import coredevices.ui.PebbleElevatedButton
+import coredevices.ui.SignInButton
 import coredevices.util.CactusSTTMode
 import coredevices.util.CompanionDevice
 import coredevices.util.CoreConfigFlow
 import coredevices.util.CoreConfigHolder
 import coredevices.util.PermissionRequester
+import coredevices.util.WeatherUnit
 import coredevices.util.calculateDefaultSTTModel
 import coredevices.util.deleteRecursive
+import coredevices.util.emailOrNull
 import coredevices.util.getModelDirectories
 import coredevices.util.rememberUiContext
 import dev.gitlive.firebase.Firebase
@@ -118,6 +122,7 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import org.koin.compose.koinInject
 import theme.CoreAppTheme
 import theme.ThemeProvider
+import kotlin.math.roundToInt
 
 enum class Section(val title: String) {
     Permissions("Permissions"),
@@ -217,7 +222,7 @@ sealed interface RequestedSTTMode {
 }
 
 @Composable
-fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams, experimentalRoute: CoreRoute?) {
+fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
     Box(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
         val libPebble = rememberLibPebble()
         val libPebbleConfig by libPebble.config.collectAsState()
@@ -230,10 +235,10 @@ fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams, experi
         val pebbleAccount = koinInject<PebbleAccount>()
         val bootConfig = koinInject<BootConfigProvider>()
         val loggedIn by pebbleAccount.loggedIn.collectAsState()
-        val user by Firebase.auth.authStateChanged.map {
-            it?.email
+        val coreUser by Firebase.auth.authStateChanged.map {
+            it?.emailOrNull
         }.distinctUntilChanged()
-            .collectAsState(Firebase.auth.currentUser)
+            .collectAsState(Firebase.auth.currentUser?.emailOrNull)
         val firestoreLocker = koinInject<FirestoreLocker>()
         val scope = rememberCoroutineScope()
         val appContext = koinInject<AppContext>()
@@ -350,36 +355,11 @@ please disable the option.""".trimIndent(),
             val isRebble = remember {
                 parseUrl(bootConfig.getUrl() ?: "")?.host?.endsWith("rebble.io") == true
             }
-            val webServices = koinInject<RealPebbleWebServices>()
             LockerImportDialog(
                 onDismissRequest = { showLockerImportDialog = false },
-                onImportFromPebbleAccount = { progressUpdate ->
-                    try {
-                        firestoreLocker.importPebbleLocker(webServices, "https://appstore-api.rebble.io/api").collect {
-                            progressUpdate(it.first.toFloat() / it.second.toFloat())
-                        }
-                        progressUpdate(-1f)
-                        libPebble.requestLockerSync().await()
-                        coreConfigHolder.update(
-                            coreConfig.copy(
-                                useNativeAppStore = true
-                            )
-                        )
-                    } catch (e: Exception) {
-                        logger.e(e) { "Error importing locker from pebble account: ${e.message}" }
-                        topBarParams.showSnackbar("Error importing locker")
-                    }
-                    showLockerImportDialog = false
-                },
-                onStartFresh = {
-                    coreConfigHolder.update(
-                        coreConfig.copy(
-                            useNativeAppStore = true
-                        )
-                    )
-                    showLockerImportDialog = false
-                },
-                isRebble = isRebble
+                isRebble = isRebble,
+                onEnabled = {},
+                topBarParams = topBarParams,
             )
         }
 
@@ -419,7 +399,8 @@ please disable the option.""".trimIndent(),
             enableMemfault,
             enableMixpanel,
             coreConfig,
-            experimentalDevices
+            experimentalDevices,
+            loggedIn,
         ) {
             listOf(
                 basicSettingsActionItem(
@@ -521,12 +502,6 @@ please disable the option.""".trimIndent(),
                     action = { navBarNav.navigateTo(PebbleRoutes.AppstoreSettingsRoute) },
                     show = { coreConfig.useNativeAppStore },
                 ),
-                basicSettingsActionItem(
-                    title = "Experimental Feed",
-                    section = Section.Default,
-                    action = { navBarNav.navigateTo(experimentalRoute!!) },
-                    show = { experimentalRoute != null },
-                ),
                 SettingsItem(
                     title = TITLE_APP_THEME,
                     section = Section.Default,
@@ -579,6 +554,18 @@ please disable the option.""".trimIndent(),
                     },
                 ),
                 basicSettingsToggleItem(
+                    title = "Enable Index Feed",
+                    section = Section.Default,
+                    checked = coreConfig.enableIndex,
+                    onCheckChanged = {
+                        coreConfigHolder.update(
+                            coreConfig.copy(
+                                enableIndex = it,
+                            )
+                        )
+                    },
+                ),
+                basicSettingsToggleItem(
                     title = "Dump notifications to logs",
                     description = "Detailed notification logging, to diagnose processing/deduplication issues",
                     section = Section.Logging,
@@ -608,6 +595,49 @@ please disable the option.""".trimIndent(),
                             )
                         )
                     },
+                ),
+                basicSettingsActionItem(
+                    title = "Notification Filtering",
+                    section = Section.Notifications,
+                    keywords = "filter block allow whitelist blacklist mute",
+                    action = {
+                        navBarNav.navigateTo(PebbleNavBarRoutes.NotificationsRoute)
+                    },
+                    show = { coreConfig.enableIndex }, // Shown to replace functionality from nav bar now index replaces it
+                ),
+                basicSettingsNumberItem(
+                    title = "Store notifications for",
+                    section = Section.Notifications,
+                    description = "How long notifications are stored for (days). This enabled better deduplicating, and powers the notification history view",
+                    value = libPebbleConfig.notificationConfig.storeNotifiationsForDays,
+                    onValueChange = {
+                        libPebble.updateConfig(
+                            libPebbleConfig.copy(
+                                notificationConfig = libPebbleConfig.notificationConfig.copy(
+                                    storeNotifiationsForDays = it
+                                )
+                            )
+                        )
+                    },
+                    show = { pebbleFeatures.supportsNotificationFiltering() },
+                    min = 0,
+                    max = 7,
+                ),
+                basicSettingsToggleItem(
+                    title = "Store disabled notifications",
+                    description = "Store notifications from disabled apps/channels, to allow viewing them in history",
+                    section = Section.Notifications,
+                    checked = libPebbleConfig.notificationConfig.storeDisabledNotifications,
+                    onCheckChanged = {
+                        libPebble.updateConfig(
+                            libPebbleConfig.copy(
+                                notificationConfig = libPebbleConfig.notificationConfig.copy(
+                                    storeDisabledNotifications = it
+                                )
+                            )
+                        )
+                    },
+                    show = { pebbleFeatures.supportsNotificationFiltering() },
                 ),
                 basicSettingsToggleItem(
                     title = "Always send notifications",
@@ -829,6 +859,7 @@ please disable the option.""".trimIndent(),
                 ),
                 basicSettingsToggleItem(
                     title = "Weather Pins",
+                    description = "Add weather pins to timeline for the current location (requires location permissions)",
                     section = Section.Weather,
                     checked = coreConfig.weatherPinsV2,
                     onCheckChanged = {
@@ -839,6 +870,22 @@ please disable the option.""".trimIndent(),
                         )
                         GlobalScope.launch { weatherFetcher.fetchWeather() }
                     },
+                ),
+                basicSettingsDropdownItem(
+                    title = "Units",
+                    keywords = "weather degrees",
+                    section = Section.Weather,
+                    items = WeatherUnit.entries,
+                    selectedItem = coreConfig.weatherUnits,
+                    onItemSelected = {
+                        coreConfigHolder.update(
+                            coreConfig.copy(
+                                weatherUnits = it,
+                            )
+                        )
+                        GlobalScope.launch { weatherFetcher.fetchWeather() }
+                    },
+                    itemText = { it.name },
                 ),
                 basicSettingsToggleItem(
                     title = "Use LAN developer connection",
@@ -920,6 +967,11 @@ please disable the option.""".trimIndent(),
                                 if (lockerEmpty && loggedIn != null) {
                                     logger.i { "Showing locker import dialog" }
                                     showLockerImportDialog = true
+                                    coreConfigHolder.update(
+                                        coreConfig.copy(
+                                            useNativeAppStore = true,
+                                        )
+                                    )
                                 } else {
                                     logger.i { "Skipping locker import dialog" }
                                     coreConfigHolder.update(
@@ -1085,7 +1137,7 @@ please disable the option.""".trimIndent(),
                     show = { debugOptionsEnabled },
                 ),
                 basicSettingsActionItem(
-                    title = "Sign Out",
+                    title = "Sign Out - Core Devices Account",
                     description = "Sign out of your Google account",
                     section = Section.Default,
                     action = {
@@ -1099,7 +1151,25 @@ please disable the option.""".trimIndent(),
                             }
                         }
                     },
-                    show = { user != null },
+                    show = { coreUser != null },
+                ),
+                basicSettingsActionItem(
+                    title = "Sign In - Core Devices Account",
+                    description = "Sign in to Core account to backup settings, apps, etc",
+                    section = Section.Default,
+                    button = { SignInButton() },
+                    show = { coreUser == null },
+                ),
+                basicSettingsActionItem(
+                    title = "Sign Out - Rebble",
+                    description = "Sign out of your Rebble account",
+                    section = Section.Default,
+                    action = {
+                        scope.launch {
+                            pebbleAccount.setToken(null, null)
+                        }
+                    },
+                    show = { loggedIn != null },
                 ),
                 basicSettingsToggleItem(
                     title = "Emulate Timeline Webservice",
@@ -1118,7 +1188,7 @@ please disable the option.""".trimIndent(),
                 ),
             )
         }
-        val filteredItems by remember(settingsItems, topBarParams.searchState.query, user) {
+        val filteredItems by remember(settingsItems, topBarParams.searchState.query, coreUser) {
             derivedStateOf {
                 val query = topBarParams.searchState.query
                 if (query.isEmpty()) {
@@ -1162,7 +1232,8 @@ please disable the option.""".trimIndent(),
 fun basicSettingsActionItem(
     title: String,
     section: Section,
-    action: (() -> Unit)?,
+    button: @Composable (() -> Unit)? = null,
+    action: (() -> Unit)? = null,
     description: String? = null,
     keywords: String = "",
     show: () -> Boolean = { true },
@@ -1182,7 +1253,9 @@ fun basicSettingsActionItem(
                         }
                     }
                     Spacer(modifier = Modifier.width(5.dp))
-                    if (action != null) {
+                    if (button != null) {
+                        button()
+                    } else if (action != null) {
                         PebbleElevatedButton(
                             onClick = { action() },
                             text = title,
@@ -1236,6 +1309,112 @@ fun basicSettingsToggleItem(
             shadowElevation = ELEVATION,
         )
     },
+)
+
+fun basicSettingsNumberItem(
+    title: String,
+    section: Section,
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    min: Int,
+    max: Int,
+    description: String? = null,
+    keywords: String = "",
+    show: () -> Boolean = { true },
+) = SettingsItem(
+    title = title,
+    section = section,
+    keywords = keywords,
+    show = show,
+    item = {
+        ListItem(
+            headlineContent = {
+                Text(title)
+            },
+            supportingContent = {
+                var sliderPosition by remember { mutableIntStateOf(value) }
+                Column {
+                    if (description != null) {
+                        Text(description, fontSize = 11.sp)
+                    }
+                    Slider(
+                        value = sliderPosition.toFloat(),
+                        onValueChange = { sliderPosition = it.roundToInt() },
+                        valueRange = min.toFloat()..max.toFloat(),
+                        steps = max - min - 1,
+                        onValueChangeFinished = {
+                            onValueChange(sliderPosition)
+                        },
+                    )
+                    Text(text = sliderPosition.toString())
+                }
+            },
+            shadowElevation = ELEVATION,
+        )
+    },
+)
+
+fun <T> basicSettingsDropdownItem(
+    title: String,
+    section: Section,
+    items: List<T>,
+    selectedItem: T,
+    onItemSelected: (T) -> Unit,
+    itemText: (T) -> String,
+    keywords: String = "",
+    show: () -> Boolean = { true },
+) = SettingsItem(
+    title = title,
+    section = section,
+    keywords = keywords,
+    show = show,
+    item = {
+        var expanded by remember { mutableStateOf(false) }
+        ListItem(
+            headlineContent = {
+                Text(title)
+            },
+            supportingContent = {
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                    modifier = Modifier.padding(5.dp),
+                ) {
+                    TextField(
+                        value = itemText(selectedItem),
+                        onValueChange = { },
+                        readOnly = true,
+                        singleLine = true,
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(
+                                expanded = expanded
+                            )
+                        },
+                        modifier = Modifier
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        items.forEach { item ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(itemText(item))
+                                },
+                                onClick = {
+                                    onItemSelected(item)
+                                    expanded = false
+                                }
+                            )
+                        }
+                    }
+
+                }
+            },
+            shadowElevation = ELEVATION,
+        )
+    }
 )
 
 private const val TITLE_PKJS_TOKEN = "Copy PKJS account token"

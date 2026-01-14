@@ -4,6 +4,7 @@ import androidx.room.ColumnInfo
 import coredev.BlobDatabase
 import coredev.GenerateRoomEntity
 import io.rebble.libpebblecommon.database.dao.BlobDbItem
+import io.rebble.libpebblecommon.database.dao.ValueParams
 import io.rebble.libpebblecommon.health.HealthSettings
 import io.rebble.libpebblecommon.metadata.WatchType
 import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
@@ -42,8 +43,8 @@ data class WatchSettings(
         default = id,
     ).toBytes()
 
-    override fun value(platform: WatchType, capabilities: Set<ProtocolCapsFlag>): UByteArray? {
-        if (!capabilities.contains(ProtocolCapsFlag.SupportsHealthInsights)) {
+    override fun value(params: ValueParams): UByteArray? {
+        if (!params.capabilities.contains(ProtocolCapsFlag.SupportsHealthInsights)) {
             return null
         }
         return WatchSettingsBlobItem(

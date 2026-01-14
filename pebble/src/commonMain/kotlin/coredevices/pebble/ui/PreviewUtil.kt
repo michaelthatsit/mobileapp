@@ -75,7 +75,7 @@ private fun fakePebbleModule(appContext: AppContext) = module {
         }
     }
     val configProvider = object : BootConfigProvider {
-        override suspend fun setUrl(url: String) {}
+        override suspend fun setUrl(url: String?) {}
         override fun getUrl(): String? = "http://fakeurl"
         override suspend fun getBootConfig(): BootConfig? = BootConfig(bootConfig)
     }
@@ -98,7 +98,7 @@ private fun fakePebbleModule(appContext: AppContext) = module {
     }
     single { themeProvider } bind ThemeProvider::class
     single { NotificationScreenViewModel() }
-    single { WatchHomeViewModel() }
+    single { WatchHomeViewModel(get()) }
     single { NotificationAppScreenViewModel() }
     single { NotificationAppsScreenViewModel() }
     single { configProvider } bind BootConfigProvider::class
@@ -202,7 +202,7 @@ class FakePebbleAccount : PebbleAccount {
     override val devToken: StateFlow<String?>
         get() = _devToken
 
-    override suspend fun setToken(token: String, bootUrl: String) {
+    override suspend fun setToken(token: String?, bootUrl: String?) {
         _loggedIn.value = token
     }
 

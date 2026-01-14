@@ -66,7 +66,7 @@ enum class NotificationAppSort {
 }
 
 @Composable
-fun NotificationsScreen(topBarParams: TopBarParams, nav: NavBarNav) {
+fun NotificationsScreen(topBarParams: TopBarParams, nav: NavBarNav, canGoBack: Boolean) {
     Box(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
         val viewModel = koinViewModel<NotificationScreenViewModel>()
         val pebbleFeatures = koinInject<PebbleFeatures>()
@@ -97,8 +97,8 @@ fun NotificationsScreen(topBarParams: TopBarParams, nav: NavBarNav) {
                 }
             }
             when (viewModel.tab.value) {
-                NotificationTab.Apps -> NotificationAppsScreen(topBarParams, nav)
-                NotificationTab.Contacts -> NotificationContactsScreen(topBarParams, nav)
+                NotificationTab.Apps -> NotificationAppsScreen(topBarParams, nav, canGoBack)
+                NotificationTab.Contacts -> NotificationContactsScreen(topBarParams, nav, canGoBack)
 //            NotificationTab.Rules -> NotificationRulesScreen(topBarParams, nav)
 //            NotificationTab.History -> NotificationHistoryScreen(topBarParams, nav)
             }
@@ -113,6 +113,7 @@ fun NotificationsScreenPreview() {
         NotificationsScreen(
             topBarParams = WrapperTopBarParams,
             nav = NoOpNavBarNav,
+            canGoBack = false,
         )
     }
 }

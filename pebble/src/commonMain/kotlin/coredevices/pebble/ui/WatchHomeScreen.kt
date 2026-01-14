@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.BrowseGallery
 import androidx.compose.material.icons.filled.Search
@@ -49,9 +50,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -63,7 +66,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import co.touchlab.kermit.Logger
@@ -71,6 +76,7 @@ import coreapp.pebble.generated.resources.Res
 import coreapp.pebble.generated.resources.apps
 import coreapp.pebble.generated.resources.devices
 import coreapp.pebble.generated.resources.faces
+import coreapp.pebble.generated.resources.index
 import coreapp.pebble.generated.resources.notifications
 import coreapp.pebble.generated.resources.settings
 import coreapp.util.generated.resources.back
@@ -78,9 +84,13 @@ import coredevices.pebble.PebbleDeepLinkHandler
 import coredevices.pebble.Platform
 import coredevices.pebble.rememberLibPebble
 import coredevices.util.CompanionDevice
+import coredevices.util.CoreConfigFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
@@ -88,7 +98,7 @@ import org.jetbrains.compose.ui.tooling.preview.Preview
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
-class WatchHomeViewModel : ViewModel() {
+class WatchHomeViewModel(coreConfig: CoreConfigFlow) : ViewModel() {
     val selectedTab = mutableStateOf(WatchHomeNavTab.Watches)
     val searchQuery = mutableStateOf(SearchState(query = "", typing = false))
     val showSearch = mutableStateOf(false)
@@ -97,18 +107,52 @@ class WatchHomeViewModel : ViewModel() {
     val title = mutableStateOf("")
     val canGoBack = mutableStateOf(false)
     val disableNextTransitionAnimation = mutableStateOf(false)
+    val indexEnabled = coreConfig.flow.map {
+        it.enableIndex
+    }.stateIn(viewModelScope, SharingStarted.Lazily, coreConfig.value.enableIndex)
 }
-
-data class SearchState(val query: String, val typing: Boolean)
 
 private val logger = Logger.withTag("WatchHomeScreen")
 
 @Composable
-fun WatchHomeScreen(coreNav: CoreNav, experimentalRoute: CoreRoute?) {
+fun WatchHomeScreen(coreNav: CoreNav, indexScreen: @Composable (TopBarParams, NavBarNav) -> Unit) {
     Box(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
-        val pebbleNavHostController = rememberNavController()
         val scope = rememberCoroutineScope()
         val viewModel = koinViewModel<WatchHomeViewModel>()
+        val indexEnabled = viewModel.indexEnabled.collectAsState()
+
+        // Create a SaveableStateHolder to preserve state for each tab
+        val saveableStateHolder = rememberSaveableStateHolder()
+
+        // Create NavControllers for each tab
+        val watchesNavController = rememberNavController()
+        val watchfacesNavController = rememberNavController()
+        val watchappsNavController = rememberNavController()
+        val notificationsNavController = rememberNavController()
+        val indexNavController = rememberNavController()
+        val settingsNavController = rememberNavController()
+
+        val navControllers = remember(
+            watchesNavController,
+            watchfacesNavController,
+            watchappsNavController,
+            notificationsNavController,
+            indexNavController,
+            settingsNavController
+        ) {
+            mapOf(
+                WatchHomeNavTab.Watches to watchesNavController,
+                WatchHomeNavTab.WatchFaces to watchfacesNavController,
+                WatchHomeNavTab.WatchApps to watchappsNavController,
+                WatchHomeNavTab.Notifications to notificationsNavController,
+                WatchHomeNavTab.Index to indexNavController,
+                WatchHomeNavTab.Settings to settingsNavController,
+            )
+        }
+
+        val currentTab = viewModel.selectedTab.value
+        val pebbleNavHostController = navControllers[currentTab]!!
+
         DisposableEffect(pebbleNavHostController) {
             val listener =
                 NavController.OnDestinationChangedListener { controller, destination, arguments ->
@@ -250,7 +294,7 @@ fun WatchHomeScreen(coreNav: CoreNav, experimentalRoute: CoreRoute?) {
                 NavigationBar(
                     modifier = Modifier.height(navBarHeight),
                 ) {
-                    WatchHomeNavTab.entries.forEach { route ->
+                    WatchHomeNavTab.navBarEntries(indexEnabled.value).forEach { route ->
                         NavigationBarItem(
                             selected = viewModel.selectedTab.value == route,
                             onClick = {
@@ -315,7 +359,7 @@ fun WatchHomeScreen(coreNav: CoreNav, experimentalRoute: CoreRoute?) {
                     showSnackbar = { scope.launch { snackbarHostState.showSnackbar(message = it) } },
                 )
             }
-            val navBarNav = remember {
+            val navBarNav = remember(pebbleNavHostController) {
                 object : NavBarNav {
                     override fun navigateTo(route: CoreRoute) {
                         coreNav.navigateTo(route)
@@ -330,12 +374,16 @@ fun WatchHomeScreen(coreNav: CoreNav, experimentalRoute: CoreRoute?) {
                     }
                 }
             }
-            NavHost(
-                pebbleNavHostController,
-                startDestination = viewModel.selectedTab.value.route,
-                modifier = Modifier.padding(windowInsets),
-            ) {
-                addNavBarRoutes(navBarNav, topBarParams, experimentalRoute, viewModel)
+
+            // Wrap each tab's NavHost in SaveableStateHolder to preserve state
+            saveableStateHolder.SaveableStateProvider(key = currentTab) {
+                NavHost(
+                    pebbleNavHostController,
+                    startDestination = currentTab.route,
+                    modifier = Modifier.padding(windowInsets),
+                ) {
+                    addNavBarRoutes(navBarNav, topBarParams, indexScreen, viewModel)
+                }
             }
         }
     }
@@ -355,11 +403,26 @@ enum class WatchHomeNavTab(
         Icons.Outlined.Notifications,
         PebbleNavBarRoutes.NotificationsRoute
     ),
+    Index(
+        Res.string.index,
+        Icons.AutoMirrored.Outlined.Notes,
+        PebbleNavBarRoutes.IndexRoute
+    ),
     Settings(
         Res.string.settings,
         Icons.Outlined.Tune,
         PebbleNavBarRoutes.WatchSettingsRoute,
-        { settingsBadgeTotal() }),
+        { settingsBadgeTotal() });
+
+    companion object {
+        fun navBarEntries(indexEnabled: Boolean): List<WatchHomeNavTab> {
+            return if (indexEnabled) {
+                entries.filter { it != Notifications }
+            } else {
+                entries.filter { it != Index }
+            }
+        }
+    }
 }
 
 @Preview
@@ -368,20 +431,9 @@ fun WatchHomePreview() {
     PreviewWrapper {
         val viewModel: WatchHomeViewModel = koinInject()
         viewModel.selectedTab.value = WatchHomeNavTab.Watches
-        WatchHomeScreen(NoOpCoreNav, null)
+        WatchHomeScreen(NoOpCoreNav,  { _, _ ->})
     }
 }
-
-@Stable
-data class TopBarParams(
-    val searchState: SearchState,
-    val searchAvailable: (Boolean) -> Unit,
-    val actions: (@Composable RowScope.() -> Unit) -> Unit,
-    val title: (String) -> Unit,
-    val canGoBack: (Boolean) -> Unit,
-    val goBack: Flow<Unit>,
-    val showSnackbar: (String) -> Unit,
-)
 
 @Composable
 fun TopBarIconButtonWithToolTip(

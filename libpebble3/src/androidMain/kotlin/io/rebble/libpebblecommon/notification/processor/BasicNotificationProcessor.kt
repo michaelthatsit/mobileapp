@@ -63,7 +63,7 @@ class BasicNotificationProcessor(
         val contactEntries = contactKeys.mapNotNull {
             contactDao.getContact(it)
         }
-        val sendVibePattern = selectVibrationPattern(contactEntries, app, sbn)
+        val sendVibePattern = selectVibrationPattern(contactEntries, app, sbn, channel)
         val appProperties = NotificationProperties.lookup(app.packageName)
 
         val color = selectColor(app, sbn, appProperties)
@@ -83,7 +83,7 @@ class BasicNotificationProcessor(
             },
             actions = actions,
             people = contactEntries,
-			vibrationPattern = sendVibePattern,
+            vibrationPattern = sendVibePattern,
             color = color,
         )
         return NotificationResult.Extracted(notification, NotificationDecision.SendToWatch)
@@ -106,6 +106,7 @@ class BasicNotificationProcessor(
     ): TimelineIcon {
         return TimelineIcon.fromCode(app.iconCode)
             ?:appProperties?.icon
+            ?: checkForIndexIcon(sbn, context.context)
             ?: sbn.iconForCategory()
     }
 
@@ -113,18 +114,31 @@ class BasicNotificationProcessor(
         contactEntries: List<ContactEntity>,
         app: NotificationAppItem,
         sbn: StatusBarNotification,
+        channel: ChannelItem?,
     ): List<UInt>? {
         // TODO we're only picking the pattern from the first contact. I don't know if the first
         //  contact is always the one that sent the message, in a group chat?
         val vibePatternForContact = findVibePattern(contactEntries.firstOrNull()?.vibePatternName)
         val vibePatternForApp = findVibePattern(app.vibePatternName)
+        val vibePatternForChannel = if (notificationConfigFlow.value.useAndroidVibePatterns) {
+            channel?.vibrationPattern
+        } else {
+            null
+        }
         val vibePatternFromNotification = if (notificationConfigFlow.value.useAndroidVibePatterns) {
             sbn.notification.vibrationPattern()
         } else {
             null
         }
+        val vibePatternFromTaskerNotification = if (notificationConfigFlow.value.useAndroidVibePatterns) {
+            var patt = emptyList<UInt>()
+            runCatching { patt = sbn.getNotification().extras.getString("extraautonotificationinfo", "").split(",").map { it.toUInt() } }
+            if (patt.size == 0) null else patt
+        } else {
+            null
+        }
         val vibePatternDefaultOverride = findVibePattern(notificationConfigFlow.value.overrideDefaultVibePattern)
-        return vibePatternForContact ?: vibePatternForApp ?: vibePatternFromNotification ?: vibePatternDefaultOverride
+        return vibePatternForContact ?: vibePatternFromTaskerNotification ?: vibePatternFromNotification ?: vibePatternForApp ?: vibePatternForChannel ?: vibePatternDefaultOverride
     }
 
     private suspend fun findVibePattern(name: String?): List<UInt>? {
@@ -132,6 +146,15 @@ class BasicNotificationProcessor(
             return null
         }
         return vibePatternDao.getVibePattern(name)?.pattern
+    }
+}
+
+const val INDEX_CHANNEL_ID = "ring_debug"
+private fun checkForIndexIcon(sbn: StatusBarNotification, context: Context): TimelineIcon? {
+    return if (sbn.packageName == context.packageName && sbn.notification.channelId == INDEX_CHANNEL_ID) {
+        TimelineIcon.NewsEvent
+    } else {
+        TimelineIcon.NotificationGeneric
     }
 }
 

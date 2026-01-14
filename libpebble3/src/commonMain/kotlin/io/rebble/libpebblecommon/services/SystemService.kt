@@ -7,7 +7,12 @@ import io.rebble.libpebblecommon.connection.PhoneCapabilities
 import io.rebble.libpebblecommon.connection.PlatformFlags
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.metadata.WatchColor
+import io.rebble.libpebblecommon.metadata.WatchColor.Pebble2DuoBlack
+import io.rebble.libpebblecommon.metadata.WatchColor.Pebble2DuoWhite
+import io.rebble.libpebblecommon.metadata.WatchColor.TimeRoundBlackGoldPolish20
+import io.rebble.libpebblecommon.metadata.WatchColor.TimeRoundBlackSilverPolish20
 import io.rebble.libpebblecommon.metadata.WatchHardwarePlatform
+import io.rebble.libpebblecommon.metadata.WatchType.CHALK
 import io.rebble.libpebblecommon.packets.FirmwareProperty
 import io.rebble.libpebblecommon.packets.PhoneAppVersion
 import io.rebble.libpebblecommon.packets.PingPong
@@ -302,14 +307,51 @@ data class WatchInfo(
     val color: WatchColor,
 )
 
+private val FwVersionSupportsCustomVibePatterns = FirmwareVersion(
+    stringVersion = "4.9.97",
+    timestamp = Instant.DISTANT_FUTURE,
+    major = 4,
+    minor = 9,
+    patch = 97,
+    suffix = null,
+    gitHash = "",
+    isRecovery = false,
+    isDualSlot = false,
+    isSlot0 = false,
+)
+
 fun WatchVersionResponse.watchInfo(color: WatchColor): WatchInfo {
     val runningFwVersion = running.firmwareVersion()
     checkNotNull(runningFwVersion)
     val recoveryFwVersion = recovery.firmwareVersion()
+    val extraCapabilities = buildSet {
+        if (runningFwVersion >= FwVersionSupportsCustomVibePatterns) {
+            // This capability was added to firmware later - keeping the hack in here for now
+            add(ProtocolCapsFlag.SupportsCustomVibePatterns)
+        }
+    }
+    val platform =
+        WatchHardwarePlatform.fromProtocolNumber(running.hardwarePlatform.get()).let { platform ->
+            when {
+                // Hack: Obelix PVT reports platform code 0
+                running.hardwarePlatform.get() == 0u.toUByte() &&
+                        serial.get().startsWith("C111") &&
+                        running.versionTag.get() == "v4.9.100" -> WatchHardwarePlatform.CORE_OBELIX_PVT
+
+                else -> platform
+            }
+        }
+    val actualColor = when {
+        // Polished PTR color codes were re-used for Asterix - but we can report the correct color
+        // if it was a Chalk.
+        color == Pebble2DuoBlack && platform.watchType == CHALK -> TimeRoundBlackSilverPolish20
+        color == Pebble2DuoWhite && platform.watchType == CHALK -> TimeRoundBlackGoldPolish20
+        else -> color
+    }
     return WatchInfo(
         runningFwVersion = runningFwVersion,
         recoveryFwVersion = recoveryFwVersion,
-        platform = WatchHardwarePlatform.fromProtocolNumber(running.hardwarePlatform.get()),
+        platform = platform,
         bootloaderTimestamp = Instant.fromEpochSeconds(bootloaderTimestamp.get().toLong()),
         board = board.get(),
         serial = serial.get(),
@@ -318,11 +360,11 @@ fun WatchVersionResponse.watchInfo(color: WatchColor): WatchInfo {
         resourceTimestamp = Instant.fromEpochSeconds(resourceTimestamp.get().toLong()),
         language = language.get(),
         languageVersion = languageVersion.get().toInt(),
-        capabilities = ProtocolCapsFlag.fromFlags(capabilities.get()),
+        capabilities = ProtocolCapsFlag.fromFlags(capabilities.get()) + extraCapabilities,
         isUnfaithful = isUnfaithful.get() ?: true,
         healthInsightsVersion = healthInsightsVersion.get()?.toInt(),
         javascriptVersion = javascriptVersion.get()?.toInt(),
-        color = color
+        color = actualColor,
     )
 }
 

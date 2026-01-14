@@ -4,5 +4,10 @@
     <application>
         <receiver android:name=".ui.TestActionReceiver" android:exported="false" />
         <receiver android:name="coredevices.pebble.firmware.UpdateActionReceiver" android:exported="false" />
+
+        <provider
+            android:authorities="coredevices.coreapp.pebblekit"
+            android:name="io.rebble.libpebblecommon.pebblekit.two.PebbleKitProvider"
+            android:exported="true" />
     </application>
 </manifest>

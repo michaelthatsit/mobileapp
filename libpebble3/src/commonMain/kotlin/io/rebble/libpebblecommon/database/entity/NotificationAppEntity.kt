@@ -8,8 +8,7 @@ import coredev.GenerateRoomEntity
 import io.rebble.libpebblecommon.database.MillisecondInstant
 import io.rebble.libpebblecommon.database.asMillisecond
 import io.rebble.libpebblecommon.database.dao.BlobDbItem
-import io.rebble.libpebblecommon.metadata.WatchType
-import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
+import io.rebble.libpebblecommon.database.dao.ValueParams
 import io.rebble.libpebblecommon.packets.blobdb.TimelineAttribute
 import io.rebble.libpebblecommon.packets.blobdb.TimelineItem
 import io.rebble.libpebblecommon.packets.blobdb.TimelineItem.Attribute
@@ -55,24 +54,14 @@ data class NotificationAppItem(
     override fun key(): UByteArray =
         SFixedString(StructMapper(), packageName.length, packageName).toBytes()
 
-    override fun value(platform: WatchType, capabilities: Set<ProtocolCapsFlag>): UByteArray? {
+    override fun value(params: ValueParams): UByteArray? {
         val m = StructMapper()
         val entity = NotificationAppBlobItem(
-            attributes = listOf(
-                Attribute(
-                    TimelineAttribute.AppName.id,
-                    SFixedString(m, name.length, name).toBytes()
-                ),
-                Attribute(TimelineAttribute.MuteDayOfWeek.id, SUByte(m, muteState.value).toBytes()),
-                Attribute(
-                    TimelineAttribute.LastUpdated.id,
-                    SUInt(
-                        m,
-                        stateUpdated.instant.epochSeconds.toUInt(),
-                        endianness = Endian.Little
-                    ).toBytes()
-                ),
-            )
+            attributes = attributes {
+                appName { name }
+                muteDayOfWeek { muteState.value }
+                lastUpdated { stateUpdated.instant }
+            }.map { it.asAttribute() }
         )
         return entity.toBytes()
     }
@@ -111,6 +100,7 @@ data class ChannelItem(
     val id: String,
     val name: String,
     val muteState: MuteState,
+    val vibrationPattern: List<UInt>? = null,
 )
 
 class NotificationAppBlobItem(

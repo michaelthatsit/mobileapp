@@ -53,7 +53,7 @@ class NotificationAppsScreenViewModel : ViewModel() {
 }
 
 @Composable
-fun NotificationAppsScreen(topBarParams: TopBarParams, nav: NavBarNav) {
+fun NotificationAppsScreen(topBarParams: TopBarParams, nav: NavBarNav, canGoBack: Boolean) {
     Box(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
         val viewModel = koinViewModel<NotificationAppsScreenViewModel>()
 
@@ -62,6 +62,10 @@ fun NotificationAppsScreen(topBarParams: TopBarParams, nav: NavBarNav) {
             topBarParams.actions {
             }
             topBarParams.canGoBack(false)
+            topBarParams.canGoBack(canGoBack)
+            topBarParams.goBack.collect {
+                nav.goBack()
+            }
         }
 
         val notificationApi: NotificationApps = koinInject()

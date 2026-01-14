@@ -12,6 +12,7 @@ import io.rebble.libpebblecommon.database.dao.TimelineNotificationRealDao
 import io.rebble.libpebblecommon.database.dao.TimelinePinRealDao
 import io.rebble.libpebblecommon.database.dao.TimelineReminderRealDao
 import io.rebble.libpebblecommon.database.entity.HealthStatDao
+import io.rebble.libpebblecommon.database.dao.ValueParams
 import io.rebble.libpebblecommon.database.entity.WatchSettingsDao
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import io.rebble.libpebblecommon.di.PlatformConfig
@@ -139,6 +140,10 @@ class BlobDB(
         previouslyConnected: Boolean,
         capabilities: Set<ProtocolCapsFlag>,
     ) {
+        val params = ValueParams(
+            platform = watchType,
+            capabilities = capabilities,
+        )
         watchScope.launch {
             if (unfaithful || !previouslyConnected) {
                 logger.d("unfaithful: wiping DBs on watch")
@@ -162,7 +167,7 @@ class BlobDB(
                 dynamicQuery(dao = db, insert = true) { dirty ->
                     dirty.forEach { item ->
                         operationLock.withLock {
-                            handleInsert(db, item, watchType, capabilities)
+                            handleInsert(db, item, params)
                         }
                     }
                 }
@@ -193,10 +198,9 @@ class BlobDB(
     private suspend fun handleInsert(
         db: BlobDbDao<BlobDbRecord>,
         item: BlobDbRecord,
-        watchType: WatchType,
-        capabilities: Set<ProtocolCapsFlag>,
+        params: ValueParams,
     ) {
-        val value = item.record.value(watchType, capabilities)
+        val value = item.record.value(params)
         val key = item.record.key()
         val keyString = key.keyAsString(db.databaseId())
         if (value == null) {
