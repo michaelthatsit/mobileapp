@@ -53,9 +53,13 @@ fun parseStepsData(payload: ByteArray, itemSize: UShort): List<HealthDataEntity>
 
         if (!SUPPORTED_STEP_VERSIONS.contains(version)) {
             logger.w {
-                "Unsupported health steps record version=$version, skipping remaining payload"
+                "Unsupported health steps record version=$version, skipping packet $i of $packetCount"
             }
-            return records
+            // Skip to next packet instead of aborting entire payload
+            val consumed = buffer.readPosition - itemStart
+            val remaining = itemSize.toInt() - consumed
+            if (remaining > 0) buffer.getBytes(remaining)
+            continue
         }
 
         var currentTimestamp = timestamp

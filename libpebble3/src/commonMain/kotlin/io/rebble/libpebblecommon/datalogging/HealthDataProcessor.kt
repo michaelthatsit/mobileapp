@@ -39,6 +39,7 @@ class HealthDataProcessor(
     private val logger = Logger.withTag("HealthDataProcessor")
 
     private val healthSessions = mutableMapOf<UByte, HealthSession>()
+    private val pendingData = mutableMapOf<UByte, MutableList<PendingDataItem>>()
     private val lastTodayUpdateDate = MutableStateFlow<LocalDate?>(null)
     private val lastTodayUpdateTime = MutableStateFlow(0L)
     private val _healthDataUpdated = MutableSharedFlow<Unit>(replay = 0)
@@ -57,59 +58,79 @@ class HealthDataProcessor(
     fun handleSessionOpen(sessionId: UByte, tag: UInt, applicationUuid: Uuid, itemSize: UShort) {
         if (tag !in HEALTH_TAGS) return
 
-        healthSessions[sessionId] = HealthSession(tag, applicationUuid, itemSize)
+        val session = HealthSession(tag, applicationUuid, itemSize)
+        healthSessions[sessionId] = session
         logger.d {
             "HEALTH_SESSION: Opened session $sessionId for ${tagName(tag)} (tag=$tag, itemSize=$itemSize bytes)"
+        }
+
+        // Process any data that arrived before the session was opened
+        pendingData.remove(sessionId)?.let { pending ->
+            logger.d { "HEALTH_SESSION: Processing ${pending.size} pending data items for session $sessionId" }
+            pending.forEach { item ->
+                processDataItem(session, sessionId, item.payload, item.itemsLeft)
+            }
         }
     }
 
     fun handleSendDataItems(sessionId: UByte, payload: ByteArray, itemsLeft: UInt) {
         val session = healthSessions[sessionId]
         if (session == null) {
-            logger.w { "HEALTH_DATA: handleSendDataItems called but session $sessionId not found in healthSessions map" }
+            // Queue data for processing when session opens (handles race condition)
+            logger.w { "HEALTH_DATA: Session $sessionId not found, queuing ${payload.size} bytes for later processing" }
+            pendingData.getOrPut(sessionId) { mutableListOf() }
+                .add(PendingDataItem(payload, itemsLeft))
             return
         }
 
+        processDataItem(session, sessionId, payload, itemsLeft)
+    }
+
+    private fun processDataItem(session: HealthSession, sessionId: UByte, payload: ByteArray, itemsLeft: UInt) {
         val payloadSize = payload.size
         logger.d { "HEALTH_DATA: handleSendDataItems called (session=$sessionId, ${payloadSize} bytes, $itemsLeft items remaining)" }
 
         // Process and store the health data in the database
         scope.launch {
-            logger.d { "HEALTH_DATA: Inside coroutine, about to process health data for session $sessionId" }
-            val summary = processHealthData(session, payload)
+            try {
+                logger.d { "HEALTH_DATA: Inside coroutine, about to process health data for session $sessionId" }
+                val summary = processHealthData(session, payload)
 
-            logger.d {
-                buildString {
-                    append("HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, ")
-                    append("$payloadSize bytes, $itemsLeft items remaining")
-                    if (summary != null) {
-                        append(") - $summary")
+                logger.d {
+                    buildString {
+                        append("HEALTH_SESSION: Received data for ${tagName(session.tag)} (session=$sessionId, ")
+                        append("$payloadSize bytes, $itemsLeft items remaining")
+                        if (summary != null) {
+                            append(") - $summary")
+                        } else {
+                            append(")")
+                        }
+                    }
+                }
+
+                // Update today's movement and recent sleep data when we finish receiving a batch
+                if (itemsLeft.toInt() == 0) {
+                    val timeZone = TimeZone.currentSystemDefault()
+                    val today = System.now().toLocalDateTime(timeZone).date
+                    val now = System.now().toEpochMilliseconds()
+                    val timeSinceLastUpdate = now - lastTodayUpdateTime.value
+
+                    val shouldUpdate = lastTodayUpdateDate.value != today
+
+                    if (shouldUpdate) {
+                        logger.d {
+                            "HEALTH_DATA: Received new data, updating today's movement and recent sleep data (last update ${timeSinceLastUpdate / 60_000}min ago)"
+                        }
+                        // Today's data is included in the weekly update, no separate call needed
+                        updateHealthStatsInDatabase(healthDao, healthStatDao, today, today.minus(DatePeriod(days = 29)), timeZone)
+                        lastTodayUpdateDate.value = today
+                        lastTodayUpdateTime.value = now
                     } else {
-                        append(")")
+                        logger.d { "HEALTH_DATA: Skipping today update - already updated today" }
                     }
                 }
-            }
-
-            // Update today's movement and recent sleep data when we finish receiving a batch
-            if (itemsLeft.toInt() == 0) {
-                val timeZone = TimeZone.currentSystemDefault()
-                val today = System.now().toLocalDateTime(timeZone).date
-                val now = System.now().toEpochMilliseconds()
-                val timeSinceLastUpdate = now - lastTodayUpdateTime.value
-
-                val shouldUpdate = lastTodayUpdateDate.value != today
-
-                if (shouldUpdate) {
-                    logger.d {
-                        "HEALTH_DATA: Received new data, updating today's movement and recent sleep data (last update ${timeSinceLastUpdate / 60_000}min ago)"
-                    }
-                    // Today's data is included in the weekly update, no separate call needed
-                    updateHealthStatsInDatabase(healthDao, healthStatDao, today, today.minus(DatePeriod(days = 29)), timeZone)
-                    lastTodayUpdateDate.value = today
-                    lastTodayUpdateTime.value = now
-                } else {
-                    logger.d { "HEALTH_DATA: Skipping today update - already updated today" }
-                }
+            } catch (e: Exception) {
+                logger.e(e) { "HEALTH_DATA: Failed to process health data for session $sessionId (${payload.size} bytes)" }
             }
         }
     }
@@ -117,6 +138,12 @@ class HealthDataProcessor(
     fun handleSessionClose(sessionId: UByte) {
         healthSessions.remove(sessionId)?.let { session ->
             logger.d { "HEALTH_SESSION: Closed session $sessionId for ${tagName(session.tag)}" }
+        }
+        // Clean up any pending data that was never processed
+        pendingData.remove(sessionId)?.let { pending ->
+            if (pending.isNotEmpty()) {
+                logger.w { "HEALTH_SESSION: Discarding ${pending.size} pending data items for closed session $sessionId (session opened too late or never)" }
+            }
         }
     }
 
@@ -200,15 +227,18 @@ class HealthDataProcessor(
         healthDao.insertOverlayDataWithDeduplication(records)
         _healthDataUpdated.emit(Unit)
 
-        val totalDurationHours = records.sumOf { it.duration } / 3600.0
-        return "${records.size} overlay records (${totalDurationHours.format(1)}h total)"
+        val totalDurationHours = kotlin.math.round(records.sumOf { it.duration } / 360.0) / 10.0
+        return "${records.size} overlay records (${totalDurationHours}h total)"
     }
-
-    private fun Double.format(decimals: Int): String = "%.${decimals}f".format(this)
 }
 
 data class HealthSession(
     val tag: UInt,
     val appUuid: Uuid,
     val itemSize: UShort,
+)
+
+data class PendingDataItem(
+    val payload: ByteArray,
+    val itemsLeft: UInt,
 )

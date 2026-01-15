@@ -113,7 +113,7 @@ fun formatTimeLabel(instant: Instant, timeZone: TimeZone): String {
     return if (minute == 0) {
         "$displayHour$amPm"
     } else {
-        "%d:%02d%s".format(displayHour, minute, amPm)
+        "$displayHour:${minute.toString().padStart(2, '0')}$amPm"
     }
 }
 

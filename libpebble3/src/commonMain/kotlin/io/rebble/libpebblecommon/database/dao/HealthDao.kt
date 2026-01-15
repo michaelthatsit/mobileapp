@@ -72,6 +72,9 @@ interface HealthDao {
     @Query("SELECT * FROM overlay_data ORDER BY startTime ASC")
     suspend fun getAllOverlayEntries(): List<OverlayDataEntity>
 
+    @Query("SELECT * FROM overlay_data WHERE startTime = :startTime AND type = :type")
+    suspend fun getOverlayAtStartTimeAndType(startTime: Long, type: Int): OverlayDataEntity?
+
     @Query("""
         SELECT SUM(duration) / 60 FROM overlay_data
         WHERE startTime >= :start AND startTime < :end AND type = 1

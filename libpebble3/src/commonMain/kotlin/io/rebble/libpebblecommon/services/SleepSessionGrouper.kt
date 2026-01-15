@@ -5,6 +5,7 @@ import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.health.HealthConstants
 import io.rebble.libpebblecommon.health.OverlayType
 import io.rebble.libpebblecommon.health.calculateSleepSearchWindow
+import kotlin.math.round
 
 /**
  * Represents a grouped sleep session combining multiple sleep/deep sleep entries
@@ -82,8 +83,8 @@ internal suspend fun fetchAndGroupDailySleep(
     logger.d {
         val entries = sleepEntries.map { entry ->
             val type = OverlayType.fromValue(entry.type)?.name ?: "Unknown"
-            val durationHrs = entry.duration / 3600.0
-            "  $type: start=${entry.startTime}, duration=${String.format("%.1f", durationHrs)}h"
+            val durationHrs = round(entry.duration / 360.0) / 10.0
+            "  $type: start=${entry.startTime}, duration=${durationHrs}h"
         }.joinToString("\n")
         "Found ${sleepEntries.size} sleep entries in window [${searchStart}-${searchEnd}]:\n$entries"
     }
@@ -92,9 +93,9 @@ internal suspend fun fetchAndGroupDailySleep(
 
     logger.d {
         val sessionsInfo = sessions.mapIndexed { idx, session ->
-            val totalHrs = session.totalSleep / 3600.0
-            val deepHrs = session.deepSleep / 3600.0
-            "  Session $idx: total=${String.format("%.1f", totalHrs)}h, deep=${String.format("%.1f", deepHrs)}h, start=${session.start}, end=${session.end}"
+            val totalHrs = round(session.totalSleep / 360.0) / 10.0
+            val deepHrs = round(session.deepSleep / 360.0) / 10.0
+            "  Session $idx: total=${totalHrs}h, deep=${deepHrs}h, start=${session.start}, end=${session.end}"
         }.joinToString("\n")
         "Grouped into ${sessions.size} sessions:\n$sessionsInfo"
     }
