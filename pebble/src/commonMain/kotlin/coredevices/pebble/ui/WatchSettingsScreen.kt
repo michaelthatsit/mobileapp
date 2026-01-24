@@ -916,6 +916,7 @@ please disable the option.""".trimIndent(),
                 basicSettingsActionItem(
                     title = "View debug stats",
                     description = "Health statistics and averages",
+                    topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     keywords = "health steps sleep stats debug",
                     action = {
