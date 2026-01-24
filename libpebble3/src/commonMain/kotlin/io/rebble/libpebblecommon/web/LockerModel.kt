@@ -32,7 +32,8 @@ data class LockerEntry(
     @SerialName("hardware_platforms") val hardwarePlatforms: List<LockerEntryPlatform>,
     val compatibility: LockerEntryCompatibility,
     val companions: LockerEntryCompanions,
-    val pbw: LockerEntryPBW? = null
+    val pbw: LockerEntryPBW? = null,
+    val source: String? = null,
 )
 
 @Serializable
@@ -75,6 +76,7 @@ data class LockerEntryCompatibility(
     val diorite: LockerEntryCompatibilityWatchPlatformDetails,
     val emery: LockerEntryCompatibilityWatchPlatformDetails,
     val flint: LockerEntryCompatibilityWatchPlatformDetails? = null,
+    val gabbro: LockerEntryCompatibilityWatchPlatformDetails? = null,
 )
 
 @Serializable

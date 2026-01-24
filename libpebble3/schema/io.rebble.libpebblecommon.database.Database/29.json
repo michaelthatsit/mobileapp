@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 28,
-    "identityHash": "4731fddaa90180caf287f416caec8868",
+    "version": 29,
+    "identityHash": "3077f68d37e7a58612a1a432345491aa",
     "entities": [
       {
         "tableName": "KnownWatchItem",
@@ -84,7 +84,7 @@
       },
       {
         "tableName": "LockerEntryEntity",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `version` TEXT NOT NULL, `title` TEXT NOT NULL, `type` TEXT NOT NULL, `developerName` TEXT NOT NULL, `configurable` INTEGER NOT NULL, `pbwVersionCode` TEXT NOT NULL, `category` TEXT, `sideloaded` INTEGER NOT NULL, `sideloadeTimestamp` INTEGER, `platforms` TEXT NOT NULL, `iosCompanion` TEXT, `androidCompanion` TEXT, `orderIndex` INTEGER NOT NULL DEFAULT 0, `systemApp` INTEGER NOT NULL DEFAULT 0, `hearts` INTEGER, `developerId` TEXT, `timelineEnabled` INTEGER, `removeLink` TEXT, `shareLink` TEXT, `pbwLink` TEXT, `userToken` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `version` TEXT NOT NULL, `title` TEXT NOT NULL, `type` TEXT NOT NULL, `developerName` TEXT NOT NULL, `configurable` INTEGER NOT NULL, `pbwVersionCode` TEXT NOT NULL, `category` TEXT, `sideloaded` INTEGER NOT NULL, `sideloadeTimestamp` INTEGER, `platforms` TEXT NOT NULL, `iosCompanion` TEXT, `androidCompanion` TEXT, `orderIndex` INTEGER NOT NULL DEFAULT 0, `systemApp` INTEGER NOT NULL DEFAULT 0, `hearts` INTEGER, `developerId` TEXT, `timelineEnabled` INTEGER, `removeLink` TEXT, `shareLink` TEXT, `pbwLink` TEXT, `userToken` TEXT, `sourceLink` TEXT, `storeId` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "recordHashcode",
@@ -226,6 +226,16 @@
           {
             "fieldPath": "record.appstoreData.userToken",
             "columnName": "userToken",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "record.appstoreData.sourceLink",
+            "columnName": "sourceLink",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "record.appstoreData.storeId",
+            "columnName": "storeId",
             "affinity": "TEXT"
           }
         ],
@@ -1251,7 +1261,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4731fddaa90180caf287f416caec8868')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3077f68d37e7a58612a1a432345491aa')"
     ]
   }
 }

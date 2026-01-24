@@ -21,6 +21,7 @@ import io.rebble.libpebblecommon.database.dao.TimelineNotificationRealDao
 import io.rebble.libpebblecommon.database.dao.TimelinePinRealDao
 import io.rebble.libpebblecommon.database.dao.TimelineReminderRealDao
 import io.rebble.libpebblecommon.database.dao.VibePatternDao
+import io.rebble.libpebblecommon.database.dao.WatchPrefRealDao
 import io.rebble.libpebblecommon.database.entity.CalendarEntity
 import io.rebble.libpebblecommon.database.entity.ContactEntity
 import io.rebble.libpebblecommon.database.entity.HealthDataEntity
@@ -45,6 +46,8 @@ import io.rebble.libpebblecommon.database.entity.TimelinePinSyncEntity
 import io.rebble.libpebblecommon.database.entity.TimelineReminderEntity
 import io.rebble.libpebblecommon.database.entity.TimelineReminderSyncEntity
 import io.rebble.libpebblecommon.database.entity.VibePatternEntity
+import io.rebble.libpebblecommon.database.entity.WatchPrefItemEntity
+import io.rebble.libpebblecommon.database.entity.WatchPrefItemSyncEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 
@@ -74,8 +77,10 @@ internal const val DATABASE_FILENAME = "libpebble3.db"
         OverlayDataEntity::class,
         HealthStatEntity::class,
         HealthStatSyncEntity::class,
+        WatchPrefItemEntity::class,
+        WatchPrefItemSyncEntity::class,
     ],
-    version = 28,
+    version = 30,
     autoMigrations = [
         AutoMigration(from = 10, to = 11),
         AutoMigration(from = 11, to = 12),
@@ -94,7 +99,9 @@ internal const val DATABASE_FILENAME = "libpebble3.db"
         AutoMigration(from = 24, to = 25),
         AutoMigration(from = 25, to = 26),
         AutoMigration(from = 26, to = 27),
-        AutoMigration(from = 27, to = 28, spec = AutoMigration28::class),
+        AutoMigration(from = 27, to = 28),
+        AutoMigration(from = 28, to = 29),
+        AutoMigration(from = 29, to = 30, spec = AutoMigration30::class),
     ],
     exportSchema = true,
 )
@@ -115,11 +122,12 @@ abstract class Database : RoomDatabase() {
     abstract fun vibePatternDao(): VibePatternDao
     abstract fun healthDao(): HealthDao
     abstract fun healthStatDao(): HealthStatDao
+    abstract fun watchPrefDao(): WatchPrefRealDao
 }
 
 @DeleteTable(tableName = "WatchSettingsEntity")
 @DeleteTable(tableName = "WatchSettingsSyncEntity")
-class AutoMigration28 : AutoMigrationSpec
+class AutoMigration30 : AutoMigrationSpec
 
 @Suppress("NO_ACTUAL_FOR_EXPECT")
 expect object DatabaseConstructor : RoomDatabaseConstructor<Database> {

@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 28,
-    "identityHash": "4731fddaa90180caf287f416caec8868",
+    "version": 30,
+    "identityHash": "0bae4b21708c34c62562bd19af073bd7",
     "entities": [
       {
         "tableName": "KnownWatchItem",
@@ -84,7 +84,7 @@
       },
       {
         "tableName": "LockerEntryEntity",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `version` TEXT NOT NULL, `title` TEXT NOT NULL, `type` TEXT NOT NULL, `developerName` TEXT NOT NULL, `configurable` INTEGER NOT NULL, `pbwVersionCode` TEXT NOT NULL, `category` TEXT, `sideloaded` INTEGER NOT NULL, `sideloadeTimestamp` INTEGER, `platforms` TEXT NOT NULL, `iosCompanion` TEXT, `androidCompanion` TEXT, `orderIndex` INTEGER NOT NULL DEFAULT 0, `systemApp` INTEGER NOT NULL DEFAULT 0, `hearts` INTEGER, `developerId` TEXT, `timelineEnabled` INTEGER, `removeLink` TEXT, `shareLink` TEXT, `pbwLink` TEXT, `userToken` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `version` TEXT NOT NULL, `title` TEXT NOT NULL, `type` TEXT NOT NULL, `developerName` TEXT NOT NULL, `configurable` INTEGER NOT NULL, `pbwVersionCode` TEXT NOT NULL, `category` TEXT, `sideloaded` INTEGER NOT NULL, `sideloadeTimestamp` INTEGER, `platforms` TEXT NOT NULL, `iosCompanion` TEXT, `androidCompanion` TEXT, `orderIndex` INTEGER NOT NULL DEFAULT 0, `systemApp` INTEGER NOT NULL DEFAULT 0, `hearts` INTEGER, `developerId` TEXT, `timelineEnabled` INTEGER, `removeLink` TEXT, `shareLink` TEXT, `pbwLink` TEXT, `userToken` TEXT, `sourceLink` TEXT, `storeId` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "recordHashcode",
@@ -226,6 +226,16 @@
           {
             "fieldPath": "record.appstoreData.userToken",
             "columnName": "userToken",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "record.appstoreData.sourceLink",
+            "columnName": "sourceLink",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "record.appstoreData.storeId",
+            "columnName": "storeId",
             "affinity": "TEXT"
           }
         ],
@@ -856,8 +866,8 @@
         ]
       },
       {
-        "tableName": "WatchSettingsEntity",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `heightMm` INTEGER NOT NULL, `weightDag` INTEGER NOT NULL, `trackingEnabled` INTEGER NOT NULL, `activityInsightsEnabled` INTEGER NOT NULL, `sleepInsightsEnabled` INTEGER NOT NULL, `ageYears` INTEGER NOT NULL, `gender` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "tableName": "HealthSettingsEntryEntity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `value` TEXT NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "recordHashcode",
@@ -885,45 +895,9 @@
             "notNull": true
           },
           {
-            "fieldPath": "record.heightMm",
-            "columnName": "heightMm",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.weightDag",
-            "columnName": "weightDag",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.trackingEnabled",
-            "columnName": "trackingEnabled",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.activityInsightsEnabled",
-            "columnName": "activityInsightsEnabled",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.sleepInsightsEnabled",
-            "columnName": "sleepInsightsEnabled",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.ageYears",
-            "columnName": "ageYears",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "record.gender",
-            "columnName": "gender",
-            "affinity": "INTEGER",
+            "fieldPath": "record.value",
+            "columnName": "value",
+            "affinity": "TEXT",
             "notNull": true
           }
         ],
@@ -935,8 +909,8 @@
         }
       },
       {
-        "tableName": "WatchSettingsSyncEntity",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordId` TEXT NOT NULL, `transport` TEXT NOT NULL, `watchSynchHashcode` INTEGER NOT NULL, PRIMARY KEY(`recordId`, `transport`), FOREIGN KEY(`recordId`) REFERENCES `WatchSettingsEntity`(`id`) ON UPDATE CASCADE ON DELETE CASCADE )",
+        "tableName": "HealthSettingsEntrySyncEntity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordId` TEXT NOT NULL, `transport` TEXT NOT NULL, `watchSynchHashcode` INTEGER NOT NULL, PRIMARY KEY(`recordId`, `transport`), FOREIGN KEY(`recordId`) REFERENCES `HealthSettingsEntryEntity`(`id`) ON UPDATE CASCADE ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "recordId",
@@ -966,7 +940,7 @@
         },
         "foreignKeys": [
           {
-            "table": "WatchSettingsEntity",
+            "table": "HealthSettingsEntryEntity",
             "onDelete": "CASCADE",
             "onUpdate": "CASCADE",
             "columns": [
@@ -1156,6 +1130,244 @@
         }
       },
       {
+        "tableName": "health_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`timestamp` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `orientation` INTEGER NOT NULL, `intensity` INTEGER NOT NULL, `lightIntensity` INTEGER NOT NULL, `activeMinutes` INTEGER NOT NULL, `restingGramCalories` INTEGER NOT NULL, `activeGramCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `heartRate` INTEGER NOT NULL, `heartRateZone` INTEGER NOT NULL, `heartRateWeight` INTEGER NOT NULL, PRIMARY KEY(`timestamp`))",
+        "fields": [
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orientation",
+            "columnName": "orientation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intensity",
+            "columnName": "intensity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lightIntensity",
+            "columnName": "lightIntensity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeMinutes",
+            "columnName": "activeMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "restingGramCalories",
+            "columnName": "restingGramCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeGramCalories",
+            "columnName": "activeGramCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceCm",
+            "columnName": "distanceCm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRate",
+            "columnName": "heartRate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateZone",
+            "columnName": "heartRateZone",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateWeight",
+            "columnName": "heartRateWeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "timestamp"
+          ]
+        }
+      },
+      {
+        "tableName": "overlay_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`startTime` INTEGER NOT NULL, `duration` INTEGER NOT NULL, `type` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `restingKiloCalories` INTEGER NOT NULL, `activeKiloCalories` INTEGER NOT NULL, `distanceCm` INTEGER NOT NULL, `offsetUTC` INTEGER NOT NULL, PRIMARY KEY(`startTime`, `type`))",
+        "fields": [
+          {
+            "fieldPath": "startTime",
+            "columnName": "startTime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duration",
+            "columnName": "duration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "restingKiloCalories",
+            "columnName": "restingKiloCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeKiloCalories",
+            "columnName": "activeKiloCalories",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceCm",
+            "columnName": "distanceCm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "offsetUTC",
+            "columnName": "offsetUTC",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "startTime",
+            "type"
+          ]
+        }
+      },
+      {
+        "tableName": "HealthStatEntity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `key` TEXT NOT NULL, `payload` BLOB NOT NULL, `lastUpdated` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "recordHashcode",
+            "columnName": "recordHashcode",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sync",
+            "columnName": "sync",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "record.key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "record.payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "record.lastUpdated",
+            "columnName": "lastUpdated",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        }
+      },
+      {
+        "tableName": "HealthStatSyncEntity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordId` TEXT NOT NULL, `transport` TEXT NOT NULL, `watchSynchHashcode` INTEGER NOT NULL, PRIMARY KEY(`recordId`, `transport`), FOREIGN KEY(`recordId`) REFERENCES `HealthStatEntity`(`key`) ON UPDATE CASCADE ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "recordId",
+            "columnName": "recordId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transport",
+            "columnName": "transport",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "watchSynchHashcode",
+            "columnName": "watchSynchHashcode",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "recordId",
+            "transport"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "HealthStatEntity",
+            "onDelete": "CASCADE",
+            "onUpdate": "CASCADE",
+            "columns": [
+              "recordId"
+            ],
+            "referencedColumns": [
+              "key"
+            ]
+          }
+        ]
+      },
+      {
         "tableName": "WatchPrefItemEntity",
         "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordHashcode` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `sync` INTEGER NOT NULL DEFAULT 1, `id` TEXT NOT NULL, `value` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
@@ -1251,7 +1463,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4731fddaa90180caf287f416caec8868')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0bae4b21708c34c62562bd19af073bd7')"
     ]
   }
 }

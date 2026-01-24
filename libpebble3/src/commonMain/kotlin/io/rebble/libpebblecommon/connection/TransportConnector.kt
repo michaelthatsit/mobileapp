@@ -194,6 +194,8 @@ class RealPebbleConnector(
         systemService.init()
         appRunStateService.init()
         dataLoggingService.initialInit()
+        // Allow the service to buffer up writeback sync messages
+        blobDBService.init()
 
         val watchInfo = negotiator.negotiate(systemService, appRunStateService)
         if (watchInfo == null) {
@@ -241,7 +243,6 @@ class RealPebbleConnector(
             return
         }
 
-        blobDBService.init()
         blobDB.init(
             watchType = watchInfo.platform.watchType,
             unfaithful = watchInfo.isUnfaithful,

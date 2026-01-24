@@ -12,11 +12,9 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import coredevices.database.AppstoreSource
-import coredevices.util.CoreConfigHolder
 import io.rebble.libpebblecommon.locker.AppType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 /**
@@ -75,10 +73,9 @@ object PebbleNavBarRoutes {
 
     @Serializable
     data class LockerAppRoute(
-        val uuid: String,
+        val uuid: String?,
         val storedId: String?,
-        val storeSource: String?,
-        val storeSources: String? = null,
+        val storeSource: Int?,
     ) : NavBarRoute
 
     @Serializable
@@ -97,7 +94,7 @@ object PebbleNavBarRoutes {
     data object PermissionsRoute : NavBarRoute
 
     @Serializable
-    data class AppStoreRoute(val appType: String) : NavBarRoute
+    data class AppStoreRoute(val appType: String?, val deepLinkId: String?) : NavBarRoute
 
     @Serializable
     data class AppNotificationViewerRoute(val packageName: String, val channelId: String?) :
@@ -159,7 +156,7 @@ fun NavGraphBuilder.addNavBarRoutes(
 ) {
     composableWithAnimations<PebbleNavBarRoutes.AppStoreRoute>(viewModel) {
         val route: PebbleNavBarRoutes.AppStoreRoute = it.toRoute()
-        AppStoreScreen(nav, AppType.fromString(route.appType)!!, topBarParams)
+        AppStoreScreen(nav, route.appType?.let { AppType.fromString(it) }, topBarParams, route.deepLinkId)
     }
     composableWithAnimations<PebbleNavBarRoutes.WatchesRoute>(viewModel) {
         WatchesScreen(nav, topBarParams)
@@ -186,18 +183,14 @@ fun NavGraphBuilder.addNavBarRoutes(
         val route: PebbleNavBarRoutes.LockerAppRoute = it.toRoute()
         LockerAppScreen(
             topBarParams,
-            Uuid.parse(route.uuid),
+            route.uuid?.let { Uuid.parse(it) },
             nav,
             route.storedId,
-            route.storeSource?.let { Json.decodeFromString<AppstoreSource>(route.storeSource) },
-            route.storeSources?.let {
-                Json.decodeFromString<List<Pair<String, AppstoreSource>>>(route.storeSources)
-            },
+            route.storeSource,
         )
     }
     composableWithAnimations<PebbleNavBarRoutes.NotificationsRoute>(viewModel) {
-        val coreConfigHolder = koinInject<CoreConfigHolder>()
-        NotificationsScreen(topBarParams, nav, coreConfigHolder.config.value.enableIndex)
+        NotificationsScreen(topBarParams, nav)
     }
     composableWithAnimations<PebbleNavBarRoutes.IndexRoute>(viewModel) {
         indexScreen(topBarParams, nav)

@@ -17,6 +17,7 @@ import io.rebble.libpebblecommon.database.asMillisecond
 import io.rebble.libpebblecommon.database.dao.AppWithCount
 import io.rebble.libpebblecommon.database.dao.ChannelAndCount
 import io.rebble.libpebblecommon.database.dao.ContactWithCount
+import io.rebble.libpebblecommon.database.dao.WatchPreference
 import io.rebble.libpebblecommon.database.entity.CalendarEntity
 import io.rebble.libpebblecommon.database.entity.ChannelGroup
 import io.rebble.libpebblecommon.database.entity.ChannelItem
@@ -26,6 +27,7 @@ import io.rebble.libpebblecommon.database.entity.NotificationAppItem
 import io.rebble.libpebblecommon.database.entity.NotificationEntity
 import io.rebble.libpebblecommon.database.entity.TimelineNotification
 import io.rebble.libpebblecommon.database.entity.TimelinePin
+import io.rebble.libpebblecommon.database.entity.WatchPref
 import io.rebble.libpebblecommon.health.HealthDebugStats
 import io.rebble.libpebblecommon.health.HealthSettings
 import io.rebble.libpebblecommon.js.PKJSApp
@@ -42,6 +44,7 @@ import io.rebble.libpebblecommon.music.PlaybackState
 import io.rebble.libpebblecommon.music.RepeatType
 import io.rebble.libpebblecommon.notification.NotificationDecision
 import io.rebble.libpebblecommon.notification.VibePattern
+import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
 import io.rebble.libpebblecommon.protocolhelpers.PebblePacket
 import io.rebble.libpebblecommon.services.FirmwareVersion
 import io.rebble.libpebblecommon.services.WatchInfo
@@ -55,9 +58,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.io.files.Path
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -175,6 +180,9 @@ class FakeLibPebble : LibPebble {
 
     override suspend fun removeApp(id: Uuid): Boolean = true
     override suspend fun addAppToLocker(app: LockerEntry) {
+    }
+
+    override fun restoreSystemAppOrder() {
     }
 
     private val _notificationApps = MutableStateFlow(fakeNotificationApps)
@@ -361,6 +369,23 @@ class FakeLibPebble : LibPebble {
     override fun deleteCustomPattern(name: String) {
         TODO("Not yet implemented")
     }
+
+    private val _watchPrefs = MutableStateFlow(
+        WatchPref.enumeratePrefs().map { WatchPreference(it, null) }
+    )
+
+    override val watchPrefs: Flow<List<WatchPreference<*>>> = _watchPrefs.asStateFlow()
+
+    override fun setWatchPref(watchPref: WatchPreference<*>) {
+        _watchPrefs.update { current ->
+            val index = current.indexOfFirst { it.pref.id == watchPref.pref.id }
+            if (index != -1) {
+                current.toMutableList().apply { set(index, watchPref) }
+            } else {
+                current + watchPref
+            }
+        }
+    }
 }
 
 fun fakeWatches(): List<PebbleDevice> {
@@ -455,6 +480,7 @@ class FakeConnectedDevice(
     override val runningFwVersion: String = "v1.2.3-core",
     override val connectionFailureInfo: ConnectionFailureInfo?,
     override val usingBtClassic: Boolean = false,
+    override val capabilities: Set<ProtocolCapsFlag> = emptySet()
 ) : ConnectedPebbleDevice {
 
     override fun forget() {}
@@ -470,6 +496,7 @@ class FakeConnectedDevice(
     override fun resetIntoPrf() {}
 
     override fun createCoreDump() {}
+    override fun factoryReset() {}
 
     override suspend fun sendPPMessage(bytes: ByteArray) {}
 
@@ -606,6 +633,7 @@ class FakeConnectedDeviceInRecovery(
     override val runningFwVersion: String = "v1.2.3-core",
     override val connectionFailureInfo: ConnectionFailureInfo?,
     override val usingBtClassic: Boolean = false,
+    override val capabilities: Set<ProtocolCapsFlag> = emptySet(),
 ) : ConnectedPebbleDeviceInRecovery {
 
     override fun forget() {}
@@ -790,6 +818,9 @@ fun fakeLockerEntry(): LockerWrapper {
             iosCompanion = null,
             androidCompanion = null,
             order = 0,
+            developerId = "123",
+            sourceLink = "https://example.com",
+            storeId = "6962e51d29173c0009b18f8e",
         ),
         sideloaded = false,
         configurable = Random.nextBoolean(),
