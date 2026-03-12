@@ -131,6 +131,8 @@ import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.distinctUntilChanged
+import coredevices.pebble.health.HealthSyncTracker
+import coredevices.pebble.health.PlatformHealthSync
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -423,6 +425,10 @@ please disable the option.""".trimIndent(),
     }
     val watchPrefs = watchPrefs()
     val coreAnalytics: CoreAnalytics = koinInject()
+    val platformHealthSync: PlatformHealthSync = koinInject()
+    val healthSyncTracker: HealthSyncTracker = koinInject()
+    var healthPlatformSyncEnabled by remember { mutableStateOf(healthSyncTracker.enabled) }
+    val isSyncing by platformHealthSync.syncing.collectAsState()
 
     val rawSettingsItems = remember(
             libPebbleConfig,
@@ -919,6 +925,46 @@ please disable the option.""".trimIndent(),
                                 sleepInsightsEnabled = it
                             )
                         )
+                    },
+                ),
+                basicSettingsToggleItem(
+                    title = if (platform == Platform.IOS) "Sync to Apple Health" else "Sync to Health Connect",
+                    topLevelType = TopLevelType.Phone,
+                    section = Section.Health,
+                    checked = healthPlatformSyncEnabled,
+                    description = "Write steps, heart rate, sleep, and workouts to your phone's health platform",
+                    onCheckChanged = { enabled ->
+                        scope.launch {
+                            if (enabled) {
+                                val available = platformHealthSync.isAvailable()
+                                if (!available) {
+                                    logger.w { "Health platform not available on this device" }
+                                    return@launch
+                                }
+                                val granted = platformHealthSync.requestPermissions()
+                                if (!granted) {
+                                    logger.w { "Health platform permissions not granted" }
+                                    return@launch
+                                }
+                            }
+                            healthSyncTracker.enabled = enabled
+                            healthPlatformSyncEnabled = enabled
+                            if (enabled) {
+                                platformHealthSync.sync()
+                            }
+                        }
+                    },
+                ),
+                basicSettingsActionItem(
+                    title = "Sync Now",
+                    description = if (isSyncing) "Syncing..." else "Sync Pebble health data to phone",
+                    topLevelType = TopLevelType.Phone,
+                    section = Section.Health,
+                    show = { healthPlatformSyncEnabled },
+                    action = {
+                        scope.launch {
+                            platformHealthSync.sync()
+                        }
                     },
                 ),
                 basicSettingsActionItem(
@@ -1988,6 +2034,7 @@ fun STTLanguageDialog(
 expect fun makeTokenClipEntry(token: String): ClipEntry
 
 object SettingsKeys {
+    const val KEY_HEALTH_PLATFORM_SYNC = "health_platform_sync_enabled"
     const val KEY_ENABLE_MEMFAULT_UPLOADS = "enable_memfault_uploads"
     const val KEY_ENABLE_FIREBASE_UPLOADS = "enable_firebase_uploads"
     const val KEY_ENABLE_MIXPANEL_UPLOADS = "enable_mixpanel_uploads"
@@ -2021,3 +2068,4 @@ enum class WeatherSyncInterval(
         fun from(period: Duration): WeatherSyncInterval = entries.find { it.period == period } ?: OneHour
     }
 }
+
