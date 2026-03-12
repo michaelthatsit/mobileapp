@@ -66,7 +66,14 @@ class PlatformHealthSync(
                 HealthDataType.Steps,
                 HealthDataType.HeartRate,
                 HealthDataType.Sleep,
-                HealthDataType.Exercise(),
+                HealthDataType.Exercise(
+                    activeEnergyBurned = false,
+                    cyclingPower = false,
+                    cyclingSpeed = false,
+                    flightsClimbed = false,
+                    distanceWalkingRunning = true,
+                    runningSpeed = false,
+                ),
             ),
         )
         return result.getOrDefault(false)
