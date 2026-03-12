@@ -20,6 +20,7 @@ import io.rebble.libpebblecommon.connection.endpointmanager.timeline.CustomTimel
 import io.rebble.libpebblecommon.contacts.PhoneContactsSyncer
 import io.rebble.libpebblecommon.database.dao.AppWithCount
 import io.rebble.libpebblecommon.database.dao.ChannelAndCount
+import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.database.dao.ContactWithCount
 import io.rebble.libpebblecommon.database.dao.TimelineNotificationRealDao
 import io.rebble.libpebblecommon.database.dao.VibePatternDao
@@ -124,6 +125,7 @@ interface HealthApi {
     suspend fun getHealthDebugStats(): HealthDebugStats
     fun requestHealthData(fullSync: Boolean = false)
     fun sendHealthAveragesToWatch()
+    val healthDao: HealthDao
 }
 
 interface Weather {

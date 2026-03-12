@@ -7,6 +7,7 @@ import androidx.paging.PagingSource
 import io.ktor.util.PlatformUtils
 import io.rebble.libpebblecommon.LibPebbleConfig
 import io.rebble.libpebblecommon.calls.Call
+import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.connection.bt.BluetoothState
 import io.rebble.libpebblecommon.connection.endpointmanager.FirmwareUpdater
 import io.rebble.libpebblecommon.connection.endpointmanager.InstalledLanguagePack
@@ -357,6 +358,9 @@ class FakeLibPebble : LibPebble {
     override fun sendHealthAveragesToWatch() {
         // No-op for fake implementation
     }
+
+    override val healthDao: HealthDao
+        get() = throw UnsupportedOperationException("FakeLibPebble does not have a HealthDao")
 
     override suspend fun getCurrentPosition(): GeolocationPositionResult {
         TODO("Not yet implemented")

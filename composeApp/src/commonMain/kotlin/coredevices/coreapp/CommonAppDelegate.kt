@@ -11,6 +11,9 @@ import coredevices.analytics.CoreAnalytics
 import coredevices.analytics.setUser
 import coredevices.coreapp.api.BugReports
 import coredevices.coreapp.push.PushMessaging
+import coredevices.pebble.health.PlatformHealthSync
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import coredevices.coreapp.ui.screens.SHOWN_ONBOARDING
 import coredevices.coreapp.util.AppUpdate
 import coredevices.firestore.UsersDao
@@ -55,9 +58,10 @@ class CommonAppDelegate(
     private val pebbleAccountProvider: PebbleAccountProvider,
     private val firestoreLocker: FirestoreLocker,
     private val libPebble: LibPebble,
-) : CoreBackgroundSync {
+) : CoreBackgroundSync, KoinComponent {
     private val logger = Logger.withTag("CommonAppDelegate")
     private val syncInProgress = MutableStateFlow(false)
+    private val platformHealthSync: PlatformHealthSync by inject()
 
     /**
      * Fixes case people updated to new version with the setting for model after using the previous default,
@@ -117,6 +121,10 @@ class CommonAppDelegate(
         }
         firestoreLocker.init()
         oneTimeSetLockerOrderMode()
+        // Health platform sync: trigger on app launch
+        GlobalScope.launch(Dispatchers.Default) {
+            platformHealthSync.sync()
+        }
         if (settings.getBoolean(SHOWN_ONBOARDING, false)) {
             doneInitialOnboarding.onDoneInitialOnboarding()
         }
@@ -148,6 +156,9 @@ class CommonAppDelegate(
                 },
                 scope.launch {
                     weatherFetcher.fetchWeather(scope)
+                },
+                scope.launch {
+                    platformHealthSync.sync()
                 },
             )
         } else {

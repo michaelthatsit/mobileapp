@@ -1,0 +1,249 @@
+package coredevices.pebble.health
+
+import co.touchlab.kermit.Logger
+import com.viktormykhailiv.kmp.health.HealthDataType
+import com.viktormykhailiv.kmp.health.HealthManager
+import com.viktormykhailiv.kmp.health.HealthManagerFactory
+import com.viktormykhailiv.kmp.health.HealthRecord
+import com.viktormykhailiv.kmp.health.records.ExerciseSessionRecord
+import com.viktormykhailiv.kmp.health.records.ExerciseType
+import com.viktormykhailiv.kmp.health.records.HeartRateRecord
+import com.viktormykhailiv.kmp.health.records.SleepSessionRecord
+import com.viktormykhailiv.kmp.health.records.SleepStageType
+import com.viktormykhailiv.kmp.health.records.StepsRecord
+import com.viktormykhailiv.kmp.health.records.metadata.Device
+import com.viktormykhailiv.kmp.health.records.metadata.DeviceType
+import com.viktormykhailiv.kmp.health.records.metadata.Metadata
+import io.rebble.libpebblecommon.connection.LibPebble
+import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
+import io.rebble.libpebblecommon.health.OverlayType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
+
+class PlatformHealthSync(
+    private val libPebble: LibPebble,
+    private val tracker: HealthSyncTracker,
+) {
+    private val logger = Logger.withTag("PlatformHealthSync")
+    private val healthManager: HealthManager = HealthManagerFactory().createManager()
+    private val healthDao get() = libPebble.healthDao
+
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing
+
+    /** Check if the health platform is available on this device. */
+    suspend fun isAvailable(): Boolean {
+        return healthManager.isAvailable().getOrDefault(false)
+    }
+
+    /** Request write permissions. Returns true if granted. */
+    suspend fun requestPermissions(): Boolean {
+        val result = healthManager.requestAuthorization(
+            readTypes = emptyList(),
+            writeTypes = listOf(
+                HealthDataType.Steps,
+                HealthDataType.HeartRate,
+                HealthDataType.Sleep,
+                HealthDataType.Exercise(),
+            ),
+        )
+        return result.getOrDefault(false)
+    }
+
+    /** Run a sync: query new data from Room DB, map to HealthKMP records, write. */
+    suspend fun sync() {
+        if (_syncing.value) return
+        if (!tracker.enabled) return
+
+        _syncing.value = true
+        try {
+            syncStepsAndHeartRate()
+            syncOverlays()
+            logger.d { "Health platform sync completed" }
+        } catch (e: Exception) {
+            logger.e(e) { "Health platform sync failed" }
+        } finally {
+            _syncing.value = false
+        }
+    }
+
+    private suspend fun syncStepsAndHeartRate() {
+        val lastTimestamp = tracker.lastSyncedStepsTimestamp
+        val latestTimestamp = healthDao.getLatestTimestamp() ?: return
+        if (latestTimestamp <= lastTimestamp) return
+
+        val records = healthDao.getHealthDataAfter(lastTimestamp)
+        if (records.isEmpty()) return
+
+        val healthRecords = mutableListOf<HealthRecord>()
+
+        for (entity in records) {
+            val startTime = Instant.fromEpochSeconds(entity.timestamp)
+            val endTime = startTime + 10.minutes
+
+            // Steps
+            if (entity.steps > 0) {
+                healthRecords += StepsRecord(
+                    startTime = startTime,
+                    endTime = endTime,
+                    count = entity.steps,
+                    metadata = createMetadata(entity.timestamp, "steps"),
+                )
+            }
+
+            // Heart rate
+            if (entity.heartRate in 1..300) {
+                healthRecords += HeartRateRecord(
+                    startTime = startTime,
+                    endTime = endTime,
+                    samples = listOf(
+                        HeartRateRecord.Sample(
+                            time = startTime,
+                            beatsPerMinute = entity.heartRate,
+                        )
+                    ),
+                    metadata = createMetadata(entity.timestamp, "hr"),
+                )
+            }
+        }
+
+        if (healthRecords.isNotEmpty()) {
+            val result = healthManager.writeData(healthRecords)
+            if (result.isSuccess) {
+                tracker.lastSyncedStepsTimestamp = records.last().timestamp
+                logger.d { "Synced ${healthRecords.size} step/HR records" }
+            } else {
+                logger.e { "Failed to write step/HR records: ${result.exceptionOrNull()}" }
+            }
+        } else {
+            // All records were zero — still advance the tracker
+            tracker.lastSyncedStepsTimestamp = records.last().timestamp
+        }
+    }
+
+    private suspend fun syncOverlays() {
+        val lastTimestamp = tracker.lastSyncedOverlayTimestamp
+        val sleepTypes = listOf(
+            OverlayType.Sleep.value,
+            OverlayType.DeepSleep.value,
+            OverlayType.Nap.value,
+            OverlayType.DeepNap.value,
+        )
+        val exerciseTypes = listOf(
+            OverlayType.Walk.value,
+            OverlayType.Run.value,
+        )
+        val allTypes = sleepTypes + exerciseTypes
+
+        val overlays = healthDao.getOverlayEntriesAfter(lastTimestamp, allTypes)
+        if (overlays.isEmpty()) return
+
+        val healthRecords = mutableListOf<HealthRecord>()
+
+        val sleepOverlays = overlays.filter { it.type in sleepTypes }
+        val exerciseOverlays = overlays.filter { it.type in exerciseTypes }
+
+        // Build sleep sessions: group adjacent sleep overlays (within 2h gap)
+        healthRecords += buildSleepSessions(sleepOverlays)
+
+        // Build exercise records
+        for (overlay in exerciseOverlays) {
+            val startTime = Instant.fromEpochSeconds(overlay.startTime)
+            val endTime = startTime + overlay.duration.seconds
+            if (overlay.duration <= 0) continue
+
+            val exerciseType = when (OverlayType.fromValue(overlay.type)) {
+                OverlayType.Walk -> ExerciseType.Walking
+                OverlayType.Run -> ExerciseType.Running
+                else -> continue
+            }
+
+            healthRecords += ExerciseSessionRecord(
+                startTime = startTime,
+                endTime = endTime,
+                exerciseType = exerciseType,
+                title = when (exerciseType) {
+                    ExerciseType.Walking -> "Walk"
+                    ExerciseType.Running -> "Run"
+                    else -> null
+                },
+                exerciseRoute = null,
+                metadata = createMetadata(overlay.startTime, "exercise"),
+            )
+        }
+
+        if (healthRecords.isNotEmpty()) {
+            val result = healthManager.writeData(healthRecords)
+            if (result.isSuccess) {
+                tracker.lastSyncedOverlayTimestamp = overlays.maxOf { it.startTime }
+                logger.d { "Synced ${healthRecords.size} sleep/exercise records" }
+            } else {
+                logger.e { "Failed to write sleep/exercise records: ${result.exceptionOrNull()}" }
+            }
+        } else {
+            tracker.lastSyncedOverlayTimestamp = overlays.maxOf { it.startTime }
+        }
+    }
+
+    private fun buildSleepSessions(overlays: List<OverlayDataEntity>): List<SleepSessionRecord> {
+        if (overlays.isEmpty()) return emptyList()
+
+        val sorted = overlays.sortedBy { it.startTime }
+        val sessions = mutableListOf<SleepSessionRecord>()
+        var currentGroup = mutableListOf(sorted.first())
+
+        for (i in 1 until sorted.size) {
+            val prev = currentGroup.last()
+            val prevEnd = prev.startTime + prev.duration
+            val curr = sorted[i]
+
+            // Group overlays within 2 hours of each other into one session
+            if (curr.startTime - prevEnd <= 2 * 3600) {
+                currentGroup.add(curr)
+            } else {
+                sessions += createSleepSession(currentGroup)
+                currentGroup = mutableListOf(curr)
+            }
+        }
+        sessions += createSleepSession(currentGroup)
+
+        return sessions
+    }
+
+    private fun createSleepSession(overlays: List<OverlayDataEntity>): SleepSessionRecord {
+        val sessionStart = Instant.fromEpochSeconds(overlays.minOf { it.startTime })
+        val sessionEnd = Instant.fromEpochSeconds(overlays.maxOf { it.startTime + it.duration })
+
+        val stages = overlays
+            .filter { it.duration > 0 }
+            .map { overlay ->
+                val stageType = when (OverlayType.fromValue(overlay.type)) {
+                    OverlayType.DeepSleep, OverlayType.DeepNap -> SleepStageType.Deep
+                    else -> SleepStageType.Light
+                }
+                SleepSessionRecord.Stage(
+                    startTime = Instant.fromEpochSeconds(overlay.startTime),
+                    endTime = Instant.fromEpochSeconds(overlay.startTime + overlay.duration),
+                    type = stageType,
+                )
+            }
+            .sortedBy { it.startTime }
+
+        return SleepSessionRecord(
+            startTime = sessionStart,
+            endTime = sessionEnd,
+            stages = stages,
+            metadata = createMetadata(overlays.first().startTime, "sleep"),
+        )
+    }
+
+    private fun createMetadata(timestamp: Long, prefix: String): Metadata {
+        return Metadata.autoRecorded(
+            id = "pebble-$prefix-$timestamp",
+            device = Device(type = DeviceType.Watch),
+        )
+    }
+}

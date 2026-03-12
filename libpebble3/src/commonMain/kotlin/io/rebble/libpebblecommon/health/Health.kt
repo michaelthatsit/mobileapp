@@ -30,7 +30,7 @@ import kotlin.time.Clock.System
 class Health(
     private val healthSettingsDao: HealthSettingsEntryDao,
     private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
-    private val healthDao: HealthDao,
+    override val healthDao: HealthDao,
     private val healthStatDao: HealthStatDao,
     private val watchManager: WatchManager,
 ) : HealthApi {
