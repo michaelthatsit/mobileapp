@@ -3,7 +3,6 @@ package coredevices.pebble.health
 import co.touchlab.kermit.Logger
 import com.viktormykhailiv.kmp.health.HealthDataType
 import com.viktormykhailiv.kmp.health.HealthManager
-import com.viktormykhailiv.kmp.health.HealthManagerFactory
 import com.viktormykhailiv.kmp.health.HealthRecord
 import com.viktormykhailiv.kmp.health.records.ExerciseSessionRecord
 import com.viktormykhailiv.kmp.health.records.ExerciseType
@@ -19,6 +18,7 @@ import io.rebble.libpebblecommon.connection.LibPebble
 import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.health.OverlayType
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -30,9 +30,9 @@ class PlatformHealthSync(
     private val libPebble: LibPebble,
     private val tracker: HealthSyncTracker,
     private val appResumed: AppResumed,
+    private val healthManager: HealthManager,
 ) {
     private val logger = Logger.withTag("PlatformHealthSync")
-    private val healthManager: HealthManager = HealthManagerFactory().createManager()
     private val healthDao get() = libPebble.healthDao
 
     private val _syncing = MutableStateFlow(false)
@@ -54,7 +54,7 @@ class PlatformHealthSync(
     }
 
     /** Check if the health platform is available on this device. */
-    suspend fun isAvailable(): Boolean {
+    fun isAvailable(): Boolean {
         return healthManager.isAvailable().getOrDefault(false)
     }
 
@@ -76,7 +76,12 @@ class PlatformHealthSync(
                 ),
             ),
         )
-        return result.getOrDefault(false)
+        val success = result.getOrDefault(false)
+        tracker.enabled = success
+        GlobalScope.launch {
+            sync()
+        }
+        return success
     }
 
     /** Run a sync: query new data from Room DB, map to HealthKMP records, write. */

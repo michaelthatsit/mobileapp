@@ -156,10 +156,8 @@ class CommonAppDelegate(
         val now = Clock.System.now()
         val lastFullSync =
             Instant.fromEpochMilliseconds(settings.getLong(KEY_LAST_FULL_SYNC_MS, 0L))
-        val lastHealthSync = Instant.fromEpochMilliseconds(settings.getLong(KEY_LAST_HEALTH_SYNC_MS, 0L))
         val doFullSync =
             force || (now - lastFullSync) >= coreConfigHolder.config.value.regularSyncInterval
-        val doHealthSync = force || (now - lastHealthSync) >= coreConfigHolder.config.value.healthSyncInterval
         logger.d { "doBackgroundSync: doFullSync=$doFullSync" }
         try {
             if (doFullSync) {
@@ -223,4 +221,3 @@ class CommonAppDelegate(
 expect fun rescheduleBgRefreshTask(appContext: AppContext, coreConfig: CoreConfig)
 
 private const val KEY_LAST_FULL_SYNC_MS = "last_full_sync_time_ms"
-private const val KEY_LAST_HEALTH_SYNC_MS = "last_health_sync_time_ms"

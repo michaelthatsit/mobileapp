@@ -89,7 +89,6 @@ data class CoreConfig(
     val interceptPKJSWeather: Boolean = true,
     val regularSyncInterval: Duration = 6.hours,
     val weatherSyncInterval: Duration = 1.hours,
-    val healthSyncInterval: Duration = 1.hours,
 )
 
 @Serializable

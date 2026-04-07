@@ -99,7 +99,12 @@ import coredevices.coreapp.util.AppUpdateState
 import coredevices.pebble.PebbleFeatures
 import coredevices.pebble.Platform
 import coredevices.pebble.account.PebbleAccount
+import coredevices.pebble.health.HealthSyncTracker
+import coredevices.pebble.health.PlatformHealthSync
 import coredevices.pebble.rememberLibPebble
+import coredevices.pebble.ui.SettingsIds.EnableHealthPlatformSync
+import coredevices.pebble.ui.SettingsIds.EnableHealthTracking
+import coredevices.pebble.ui.SettingsIds.OfflineSpeechRecognition
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_FIREBASE_UPLOADS
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_MEMFAULT_UPLOADS
 import coredevices.pebble.ui.SettingsKeys.KEY_ENABLE_MIXPANEL_UPLOADS
@@ -131,8 +136,6 @@ import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.distinctUntilChanged
-import coredevices.pebble.health.HealthSyncTracker
-import coredevices.pebble.health.PlatformHealthSync
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -192,7 +195,14 @@ enum class Section(val title: String, val icon: ImageVector) {
     Debug("Debug", Icons.Default.BugReport),
 }
 
+object SettingsIds {
+    const val OfflineSpeechRecognition = "OfflineSpeechRecognition"
+    const val EnableHealthTracking = "EnableHealthTracking"
+    const val EnableHealthPlatformSync = "EnableHealthPlatformSync"
+}
+
 data class SettingsItem(
+    val id: String? = null,
     val title: String,
     val topLevelType: TopLevelType,
     val section: Section,
@@ -211,8 +221,6 @@ data class SettingsItem(
 }
 
 private val ELEVATION = 0.dp
-val TITLE_ENABLE_HEALTH = "Enable Health Tracking"
-val TITLE_OFFLINE_SPEECH_RECOGNITION = "Offline Speech Recognition"
 
 @Composable
 fun settingsBadgeTotal(): Int {
@@ -428,7 +436,7 @@ please disable the option.""".trimIndent(),
     val platformHealthSync: PlatformHealthSync = koinInject()
     val healthSyncTracker: HealthSyncTracker = koinInject()
     var healthPlatformSyncEnabled by remember { mutableStateOf(healthSyncTracker.enabled) }
-    val isSyncing by platformHealthSync.syncing.collectAsState()
+    val healthIsSyncing by platformHealthSync.syncing.collectAsState()
 
     val rawSettingsItems = remember(
             libPebbleConfig,
@@ -889,7 +897,8 @@ please disable the option.""".trimIndent(),
                     show = { libPebbleConfig.watchConfig.calendarPins },
                 ) },
                 basicSettingsToggleItem(
-                    title = TITLE_ENABLE_HEALTH,
+                    id = EnableHealthTracking,
+                    title = "Enable Health Tracking",
                     topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     checked = healthSettings.trackingEnabled,
@@ -928,42 +937,40 @@ please disable the option.""".trimIndent(),
                     },
                 ),
                 basicSettingsToggleItem(
+                    id = EnableHealthPlatformSync,
                     title = if (platform == Platform.IOS) "Sync to Apple Health" else "Sync to Health Connect",
                     topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     checked = healthPlatformSyncEnabled,
                     description = "Write steps, heart rate, sleep, and workouts to your phone's health platform",
+                    show = { healthSettings.trackingEnabled && platformHealthSync.isAvailable() },
                     onCheckChanged = { enabled ->
                         scope.launch {
                             if (enabled) {
-                                val available = platformHealthSync.isAvailable()
-                                if (!available) {
-                                    logger.w { "Health platform not available on this device" }
-                                    return@launch
-                                }
                                 val granted = platformHealthSync.requestPermissions()
+                                healthPlatformSyncEnabled = granted
                                 if (!granted) {
                                     logger.w { "Health platform permissions not granted" }
                                     return@launch
                                 }
                             }
-                            healthSyncTracker.enabled = enabled
                             healthPlatformSyncEnabled = enabled
-                            if (enabled) {
-                                platformHealthSync.sync()
-                            }
                         }
                     },
                 ),
                 basicSettingsActionItem(
                     title = "Sync Now",
-                    description = if (isSyncing) "Syncing..." else "Sync Pebble health data to phone",
+                    description = if (healthIsSyncing) "Syncing..." else "Sync Pebble health data to phone",
                     topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     show = { healthPlatformSyncEnabled },
-                    action = {
-                        scope.launch {
-                            platformHealthSync.sync()
+                    action = if (healthIsSyncing) {
+                        null
+                    } else {
+                        {
+                            scope.launch {
+                                platformHealthSync.sync()
+                            }
                         }
                     },
                 ),
@@ -1096,7 +1103,8 @@ please disable the option.""".trimIndent(),
                     isDebugSetting = true,
                 ),
                 basicSettingsDropdownItem(
-                    title = TITLE_OFFLINE_SPEECH_RECOGNITION,
+                    id = OfflineSpeechRecognition,
+                    title = "Offline Speech Recognition",
                     keywords = "cactus stt speech recognition offline",
                     topLevelType = TopLevelType.Phone,
                     section = Section.Speech,
@@ -1729,6 +1737,7 @@ fun basicSettingsActionItem(
 )
 
 fun basicSettingsToggleItem(
+    id: String? = null,
     title: String,
     topLevelType: TopLevelType,
     section: Section,
@@ -1739,6 +1748,7 @@ fun basicSettingsToggleItem(
     show: () -> Boolean = { true },
     isDebugSetting: Boolean = false,
 ) = SettingsItem(
+    id = id,
     title = title,
     topLevelType = topLevelType,
     section = section,
@@ -1845,6 +1855,7 @@ fun basicSettingsNumberItem(
 )
 
 fun <T> basicSettingsDropdownItem(
+    id: String? = null,
     title: String,
     description: String? = null,
     topLevelType: TopLevelType,
@@ -1858,6 +1869,7 @@ fun <T> basicSettingsDropdownItem(
     isDebugSetting: Boolean = false,
     extraSupportingContent: (@Composable () -> Unit)? = null,
 ) = SettingsItem(
+    id = id,
     title = title,
     topLevelType = topLevelType,
     section = section,
@@ -2034,7 +2046,6 @@ fun STTLanguageDialog(
 expect fun makeTokenClipEntry(token: String): ClipEntry
 
 object SettingsKeys {
-    const val KEY_HEALTH_PLATFORM_SYNC = "health_platform_sync_enabled"
     const val KEY_ENABLE_MEMFAULT_UPLOADS = "enable_memfault_uploads"
     const val KEY_ENABLE_FIREBASE_UPLOADS = "enable_firebase_uploads"
     const val KEY_ENABLE_MIXPANEL_UPLOADS = "enable_mixpanel_uploads"
