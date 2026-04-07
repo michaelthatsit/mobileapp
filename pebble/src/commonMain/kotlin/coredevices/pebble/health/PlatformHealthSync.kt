@@ -53,6 +53,23 @@ class PlatformHealthSync(
         }
     }
 
+    companion object {
+        val RequestedReadTypes = emptyList<HealthDataType>()
+        val RequestedWriteTypes = listOf(
+            HealthDataType.Steps,
+            HealthDataType.HeartRate,
+            HealthDataType.Sleep,
+            HealthDataType.Exercise(
+                activeEnergyBurned = false,
+                cyclingPower = false,
+                cyclingSpeed = false,
+                flightsClimbed = false,
+                distanceWalkingRunning = true,
+                runningSpeed = false,
+            ),
+        )
+    }
+
     /** Check if the health platform is available on this device. */
     fun isAvailable(): Boolean {
         return healthManager.isAvailable().getOrDefault(false)
@@ -61,34 +78,36 @@ class PlatformHealthSync(
     /** Request write permissions. Returns true if granted. */
     suspend fun requestPermissions(): Boolean {
         val result = healthManager.requestAuthorization(
-            readTypes = emptyList(),
-            writeTypes = listOf(
-                HealthDataType.Steps,
-                HealthDataType.HeartRate,
-                HealthDataType.Sleep,
-                HealthDataType.Exercise(
-                    activeEnergyBurned = false,
-                    cyclingPower = false,
-                    cyclingSpeed = false,
-                    flightsClimbed = false,
-                    distanceWalkingRunning = true,
-                    runningSpeed = false,
-                ),
-            ),
+            readTypes = RequestedReadTypes,
+            writeTypes = RequestedWriteTypes,
         )
-        val success = result.isSuccess
+        val success = result.getOrDefault(false)
         logger.v { "requestPermissions success=$success" }
-        tracker.enabled = success
+        tracker.setEnabled(success)
         GlobalScope.launch {
             sync()
         }
         return success
     }
 
+    suspend fun hasPermission(): Boolean {
+        val result = healthManager.isAuthorized(
+            readTypes = RequestedReadTypes,
+            writeTypes = RequestedWriteTypes,
+        )
+        logger.v { "hasPermission: result=$result" }
+        return result.getOrDefault(false)
+    }
+
     /** Run a sync: query new data from Room DB, map to HealthKMP records, write. */
     suspend fun sync() {
         if (_syncing.value) return
-        if (!tracker.enabled) return
+        if (!tracker.enabled.value) return
+        if (!hasPermission()) {
+            logger.w { "No health sync permission during sync attempt!" }
+            tracker.setEnabled(false)
+            return
+        }
 
         _syncing.value = true
         try {

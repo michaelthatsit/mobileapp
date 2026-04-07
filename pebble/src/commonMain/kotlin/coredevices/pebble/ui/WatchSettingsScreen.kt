@@ -435,7 +435,7 @@ please disable the option.""".trimIndent(),
     val coreAnalytics: CoreAnalytics = koinInject()
     val platformHealthSync: PlatformHealthSync = koinInject()
     val healthSyncTracker: HealthSyncTracker = koinInject()
-    var healthPlatformSyncEnabled by remember { mutableStateOf(healthSyncTracker.enabled) }
+    val healthPlatformSyncEnabled by healthSyncTracker.enabled.collectAsState()
     val healthIsSyncing by platformHealthSync.syncing.collectAsState()
 
     val rawSettingsItems = remember(
@@ -950,13 +950,13 @@ please disable the option.""".trimIndent(),
                         scope.launch {
                             if (enabled) {
                                 val granted = platformHealthSync.requestPermissions()
-                                healthPlatformSyncEnabled = granted
                                 if (!granted) {
                                     logger.w { "Health platform permissions not granted" }
                                     return@launch
                                 }
+                            } else {
+                                healthSyncTracker.setEnabled(false)
                             }
-                            healthPlatformSyncEnabled = enabled
                         }
                     },
                 ),
