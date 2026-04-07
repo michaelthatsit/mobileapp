@@ -102,7 +102,7 @@ class PlatformHealthSync(
 
     /** Run a sync: query new data from Room DB, map to HealthKMP records, write. */
     suspend fun sync() {
-        if (_syncing.value) return
+        if (!_syncing.compareAndSet(expect = false, update = true)) return
         if (!tracker.enabled.value) return
         if (!hasPermission()) {
             logger.w { "No health sync permission during sync attempt!" }
@@ -110,7 +110,6 @@ class PlatformHealthSync(
             return
         }
 
-        _syncing.value = true
         try {
             syncStepsAndHeartRate()
             syncOverlays()
@@ -171,7 +170,6 @@ class PlatformHealthSync(
                 logger.e { "Failed to write step/HR records: ${result.exceptionOrNull()}" }
             }
         } else {
-            // All records were zero — still advance the tracker
             tracker.lastSyncedStepsTimestamp = records.last().timestamp
         }
     }
@@ -197,7 +195,7 @@ class PlatformHealthSync(
         val sleepOverlays = overlays.filter { it.type in sleepTypes }
         val exerciseOverlays = overlays.filter { it.type in exerciseTypes }
 
-        var allSucceeded = true
+        var maxSyncedTimestamp = lastTimestamp
 
         // Write sleep sessions separately so exercise failures don't block sleep
         val sleepRecords = buildSleepSessions(sleepOverlays)
@@ -205,11 +203,13 @@ class PlatformHealthSync(
             logger.d { "Writing ${sleepRecords.size} sleep sessions to health platform" }
             val result = healthManager.writeData(sleepRecords)
             if (result.isSuccess) {
+                maxSyncedTimestamp = maxOf(maxSyncedTimestamp, sleepOverlays.maxOf { it.startTime })
                 logger.d { "Synced ${sleepRecords.size} sleep records" }
             } else {
-                allSucceeded = false
                 logger.e { "Failed to write sleep records: ${result.exceptionOrNull()}" }
             }
+        } else if (sleepOverlays.isNotEmpty()) {
+            maxSyncedTimestamp = maxOf(maxSyncedTimestamp, sleepOverlays.maxOf { it.startTime })
         }
 
         // Write exercise records separately
@@ -244,16 +244,17 @@ class PlatformHealthSync(
         if (exerciseRecords.isNotEmpty()) {
             val result = healthManager.writeData(exerciseRecords)
             if (result.isSuccess) {
+                maxSyncedTimestamp = maxOf(maxSyncedTimestamp, exerciseOverlays.maxOf { it.startTime })
                 logger.d { "Synced ${exerciseRecords.size} exercise records" }
             } else {
-                allSucceeded = false
                 logger.e { "Failed to write exercise records: ${result.exceptionOrNull()}" }
             }
+        } else if (exerciseOverlays.isNotEmpty()) {
+            maxSyncedTimestamp = maxOf(maxSyncedTimestamp, exerciseOverlays.maxOf { it.startTime })
         }
 
-        // Only advance tracker if all writes succeeded (or there was nothing to write)
-        if (allSucceeded) {
-            tracker.lastSyncedOverlayTimestamp = overlays.maxOf { it.startTime }
+        if (maxSyncedTimestamp > lastTimestamp) {
+            tracker.lastSyncedOverlayTimestamp = maxSyncedTimestamp
         }
     }
 
