@@ -14,6 +14,7 @@ import com.viktormykhailiv.kmp.health.records.metadata.Device
 import com.viktormykhailiv.kmp.health.records.metadata.DeviceType
 import com.viktormykhailiv.kmp.health.records.metadata.Metadata
 import coredevices.util.AppResumed
+import io.rebble.libpebblecommon.connection.HealthDataApi
 import io.rebble.libpebblecommon.connection.LibPebble
 import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.health.OverlayType
@@ -31,9 +32,9 @@ class PlatformHealthSync(
     private val tracker: HealthSyncTracker,
     private val appResumed: AppResumed,
     private val healthManager: HealthManager,
+    private val healthDataApi: HealthDataApi,
 ) {
     private val logger = Logger.withTag("PlatformHealthSync")
-    private val healthDao get() = libPebble.healthDao
 
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing
@@ -123,10 +124,10 @@ class PlatformHealthSync(
 
     private suspend fun syncStepsAndHeartRate() {
         val lastTimestamp = tracker.lastSyncedStepsTimestamp
-        val latestTimestamp = healthDao.getLatestTimestamp() ?: return
+        val latestTimestamp = healthDataApi.getLatestTimestamp() ?: return
         if (latestTimestamp <= lastTimestamp) return
 
-        val records = healthDao.getHealthDataAfter(lastTimestamp)
+        val records = healthDataApi.getHealthDataAfter(lastTimestamp)
         if (records.isEmpty()) return
 
         val healthRecords = mutableListOf<HealthRecord>()
@@ -190,7 +191,7 @@ class PlatformHealthSync(
         )
         val allTypes = sleepTypes + exerciseTypes
 
-        val overlays = healthDao.getOverlayEntriesAfter(lastTimestamp, allTypes)
+        val overlays = healthDataApi.getOverlayEntriesAfter(lastTimestamp, allTypes)
         if (overlays.isEmpty()) return
 
         val sleepOverlays = overlays.filter { it.type in sleepTypes }

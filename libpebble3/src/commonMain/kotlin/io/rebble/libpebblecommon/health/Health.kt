@@ -3,11 +3,14 @@ package io.rebble.libpebblecommon.health
 import co.touchlab.kermit.Logger
 import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import io.rebble.libpebblecommon.connection.HealthApi
+import io.rebble.libpebblecommon.connection.HealthDataApi
 import io.rebble.libpebblecommon.connection.WatchManager
 import io.rebble.libpebblecommon.database.dao.HealthDao
+import io.rebble.libpebblecommon.database.entity.HealthDataEntity
 import io.rebble.libpebblecommon.database.entity.HealthGender
 import io.rebble.libpebblecommon.database.entity.HealthSettingsEntryDao
 import io.rebble.libpebblecommon.database.entity.HealthStatDao
+import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.database.entity.getWatchSettings
 import io.rebble.libpebblecommon.database.entity.setWatchSettings
 import io.rebble.libpebblecommon.datalogging.HealthDataProcessor
@@ -32,11 +35,11 @@ import kotlin.time.Clock.System
 class Health(
     private val healthSettingsDao: HealthSettingsEntryDao,
     private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
-    override val healthDao: HealthDao,
+    private val healthDao: HealthDao,
     private val healthStatDao: HealthStatDao,
     private val watchManager: WatchManager,
     private val healthDataProcessor: HealthDataProcessor,
-) : HealthApi {
+) : HealthApi, HealthDataApi {
     private val logger = Logger.withTag("Health")
 
     companion object {
@@ -157,6 +160,16 @@ class Health(
             logger.d { "Health stats updated (latestTimestamp=$latestTimestamp)" }
         }
     }
+
+    override suspend fun getLatestTimestamp(): Long? = healthDao.getLatestTimestamp()
+
+    override suspend fun getHealthDataAfter(afterTimestamp: Long): List<HealthDataEntity> =
+        healthDao.getHealthDataAfter(afterTimestamp)
+
+    override suspend fun getOverlayEntriesAfter(
+        afterTimestamp: Long,
+        types: List<Int>
+    ): List<OverlayDataEntity> = healthDao.getOverlayEntriesAfter(afterTimestamp, types)
 }
 
 data class HealthSettings(

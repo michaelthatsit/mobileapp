@@ -7,7 +7,6 @@ import androidx.paging.PagingSource
 import io.ktor.util.PlatformUtils
 import io.rebble.libpebblecommon.LibPebbleConfig
 import io.rebble.libpebblecommon.calls.Call
-import io.rebble.libpebblecommon.database.dao.HealthDao
 import io.rebble.libpebblecommon.connection.bt.BluetoothState
 import io.rebble.libpebblecommon.connection.endpointmanager.FirmwareUpdater
 import io.rebble.libpebblecommon.connection.endpointmanager.InstalledLanguagePack
@@ -22,10 +21,12 @@ import io.rebble.libpebblecommon.database.dao.WatchPreference
 import io.rebble.libpebblecommon.database.entity.CalendarEntity
 import io.rebble.libpebblecommon.database.entity.ChannelGroup
 import io.rebble.libpebblecommon.database.entity.ChannelItem
+import io.rebble.libpebblecommon.database.entity.HealthDataEntity
 import io.rebble.libpebblecommon.database.entity.HealthGender
 import io.rebble.libpebblecommon.database.entity.MuteState
 import io.rebble.libpebblecommon.database.entity.NotificationAppItem
 import io.rebble.libpebblecommon.database.entity.NotificationEntity
+import io.rebble.libpebblecommon.database.entity.OverlayDataEntity
 import io.rebble.libpebblecommon.database.entity.TimelineNotification
 import io.rebble.libpebblecommon.database.entity.TimelinePin
 import io.rebble.libpebblecommon.database.entity.WatchPref
@@ -360,11 +361,7 @@ class FakeLibPebble : LibPebble {
         // No-op for fake implementation
     }
 
-    override val healthDao: HealthDao
-        get() = throw UnsupportedOperationException("FakeLibPebble does not have a HealthDao")
-
-    override val healthDataUpdated: SharedFlow<Unit>
-        get() = throw UnsupportedOperationException("FakeLibPebble does not have healthDataUpdated")
+    override val healthDataUpdated: SharedFlow<Unit> = MutableStateFlow(Unit)
 
     override suspend fun getCurrentPosition(): GeolocationPositionResult {
         TODO("Not yet implemented")
@@ -422,6 +419,15 @@ class FakeLibPebble : LibPebble {
 
     override fun updateWeatherData(weatherData: List<WeatherLocationData>) {
     }
+
+    override suspend fun getLatestTimestamp(): Long? = 0
+
+    override suspend fun getHealthDataAfter(afterTimestamp: Long): List<HealthDataEntity> = emptyList()
+
+    override suspend fun getOverlayEntriesAfter(
+        afterTimestamp: Long,
+        types: List<Int>
+    ): List<OverlayDataEntity> = emptyList()
 }
 
 fun fakeWatches(): List<PebbleDevice> {
