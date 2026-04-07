@@ -915,6 +915,7 @@ please disable the option.""".trimIndent(),
                     topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     checked = healthSettings.activityInsightsEnabled,
+                    show = { healthSettings.trackingEnabled },
                     onCheckChanged = {
                         libPebble.updateHealthSettings(
                             healthSettings.copy(
@@ -928,6 +929,7 @@ please disable the option.""".trimIndent(),
                     topLevelType = TopLevelType.Phone,
                     section = Section.Health,
                     checked = healthSettings.sleepInsightsEnabled,
+                    show = { healthSettings.trackingEnabled },
                     onCheckChanged = {
                         libPebble.updateHealthSettings(
                             healthSettings.copy(
@@ -1777,6 +1779,7 @@ fun basicSettingsToggleItem(
 )
 
 fun basicSettingsNumberItem(
+    id: String? = null,
     title: String,
     topLevelType: TopLevelType,
     section: Section,
@@ -1791,6 +1794,7 @@ fun basicSettingsNumberItem(
     isDebugSetting: Boolean = false,
     defaultValue: Long? = null,
 ) = SettingsItem(
+    id = id,
     title = title,
     topLevelType = topLevelType,
     section = section,

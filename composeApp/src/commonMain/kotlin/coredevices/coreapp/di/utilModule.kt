@@ -102,7 +102,6 @@ val utilModule = module {
     } bind TranscriptionService::class
     singleOf(::WisprFlowTranscriptionService)
     single<UsersDao> { UsersDaoImpl({ get() }, get()) }
-    singleOf(::UsersDaoImpl) bind UsersDao::class
     singleOf(::HealthSyncTracker)
     singleOf(::PlatformHealthSync)
 }

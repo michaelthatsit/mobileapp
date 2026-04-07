@@ -261,7 +261,7 @@ fun WatchOnboardingScreen(
                             SectionText("Configure your watch")
                             Spacer(modifier = Modifier.height(15.dp))
 
-                            settings.Show(BoolWatchPref.Clock24h.displayName)
+                            settings.Show(BoolWatchPref.Clock24h.id)
                             settings.Show(EnableHealthTracking)
                             settings.Show(EnableHealthPlatformSync)
                             Spacer(modifier = Modifier.height(15.dp))
@@ -318,7 +318,7 @@ private fun SettingsItemsState?.Show(id: String) {
     val setting = remember(this) {
         rawSettingsItems.find { it.id == id }
     }
-    if (setting == null) {
+    if (setting == null || !setting.show()) {
         return
     }
     setting.Item()

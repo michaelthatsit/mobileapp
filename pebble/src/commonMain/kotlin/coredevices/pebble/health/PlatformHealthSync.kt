@@ -76,7 +76,8 @@ class PlatformHealthSync(
                 ),
             ),
         )
-        val success = result.getOrDefault(false)
+        val success = result.isSuccess
+        logger.v { "requestPermissions success=$success" }
         tracker.enabled = success
         GlobalScope.launch {
             sync()
